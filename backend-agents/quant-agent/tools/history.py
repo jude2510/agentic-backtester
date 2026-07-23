@@ -39,7 +39,7 @@ def get_backtest_history(symbol: str = None, limit: int = 10) -> dict:
             events_list = []
 
         records = []
-        for event in reversed(events_list):  # Most recent first
+        for event in events_list:  # order-agnostic — we sort by timestamp below
             try:
                 # AgentCore Memory may return events under 'payload' with
                 # 'conversational' message wrappers, or plain 'messages'
@@ -72,13 +72,15 @@ def get_backtest_history(symbol: str = None, limit: int = 10) -> dict:
                             continue
 
                         records.append(record)
-                        if len(records) >= limit:
-                            break
             except Exception as e:
                 print(f"⚠️ Error parsing event: {e}")
                 continue
-            if len(records) >= limit:
-                break
+
+        # Sort most-recent-first by ISO timestamp, then take the requested limit.
+        # Don't rely on list_events ordering — sort explicitly so "last N" is
+        # always the N newest runs regardless of how the API returns them.
+        records.sort(key=lambda r: r.get('timestamp', ''), reverse=True)
+        records = records[:limit]
 
         print(f"✅ Found {len(records)} backtest records in AgentCore Memory")
         return {'records': records, 'count': len(records)}

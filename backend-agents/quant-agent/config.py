@@ -196,7 +196,7 @@ def initialize_clients():
     _memory_client = MemoryClient(region_name=_region_name)
 
     # Get memory ID (makes API call)
-    _memory_id = get_memory_id_by_name("quant_agent")
+    _memory_id = os.getenv('QUANT_AGENT_MEMORY_ID') or get_memory_id_by_name("quant_agent")
 
     # Generate session ID
     _session_id = f"quant_session_{datetime.now().strftime('%Y%m%d')}"
