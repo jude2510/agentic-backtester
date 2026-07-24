@@ -67,8 +67,12 @@ def get_memory_id_by_name(name_prefix: str = "quant_agent") -> str:
                 return memory_id
 
     except Exception as e:
+        # Fail loud: return None rather than a bogus placeholder ID, so a
+        # misconfiguration surfaces immediately instead of silently using a
+        # fake memory ID. (In practice QUANT_AGENT_MEMORY_ID short-circuits
+        # this path — see initialize_clients.)
         print(f"❌ Error getting memory ID: {e}")
-        return "your_fallback_id"
+        return None
 
 
 def save_backtest_results_to_memory_sync(results: Dict[str, Any], strategy_code: str = None):

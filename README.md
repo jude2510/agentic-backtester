@@ -2,7 +2,7 @@
 
 A multi-agent system that turns a plain-English trading idea into a backtested strategy. You describe a strategy in natural language; a team of specialized AI agents generates the strategy code, fetches historical market data, runs the backtest, and writes up the results — coordinated end-to-end on Amazon Bedrock AgentCore.
 
-> **Portfolio / learning project.** Built on AWS's [`agentic_backtesting` sample](https://github.com/aws-samples/sample-tech-for-trading) (MIT-0), then extended and re-architected for local development as a study of multi-agent orchestration. See [Roadmap](#roadmap) for what's original.
+> **Portfolio / learning project.** Built on AWS's [`agentic_backtesting` sample](https://github.com/aws-samples/sample-tech-for-trading) (MIT-0), then extended and re-architected for local development — including replacing the workshop's imperative shell-script deployment with an **AWS CDK (Python)** infrastructure-as-code layer I own end to end. See [Roadmap](#roadmap) for what's original.
 
 ## Disclaimer
 
@@ -27,11 +27,12 @@ The **Quant Agent** (Claude Sonnet, on AgentCore Runtime) orchestrates all four 
 - **Amazon Bedrock AgentCore** — Runtime (agent hosting), Gateway (MCP tools), Identity/Cognito (auth), Memory (chat state), Observability (traces/logs)
 - **Amazon Bedrock models** — Claude Opus / Sonnet, Amazon Nova
 - **S3 Tables (Apache Iceberg)** + **Lambda** — market data store and access
+- **AWS CDK (Python)** — the backend (S3 Tables bucket, Lambda, Cognito, AgentCore Gateway + Target) is defined as two infrastructure-as-code stacks in [`infra/`](./infra)
 - **Next.js 14 / React** — frontend
 
 ## Running it
 
-Deployment and local-development instructions are in **[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)**. In short: deploy the backend (S3 Tables, Lambda, Gateway, Cognito), deploy the three agents to AgentCore Runtime with the `agentcore` CLI, then run the Next.js frontend locally against the orchestrator.
+Deployment and local-development instructions are in **[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)**. In short: `cdk deploy` the backend (S3 Tables, Lambda, Gateway, Cognito) from [`infra/`](./infra) and load market data, deploy the three agents to AgentCore Runtime with the `agentcore` CLI, then run the Next.js frontend locally against the orchestrator.
 
 ## Roadmap
 

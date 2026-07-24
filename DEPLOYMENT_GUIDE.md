@@ -1,332 +1,190 @@
 # Deployment Guide
 
-This guide provides step-by-step instructions for deploying the Quantitative Trading Agent System with AgentCore.
+This guide deploys the Agentic Backtester end to end:
+
+1. **Backend infrastructure** — defined as Infrastructure-as-Code with **AWS CDK (Python)**: two stacks under the `agentic-backtest` prefix that provision the S3 Tables market-data store, the market-data Lambda, Cognito (machine-to-machine auth), and the AgentCore Gateway + Target (MCP). This replaces the original workshop's imperative shell scripts.
+2. **Agents** — three Strands agents deployed to AgentCore Runtime with the `agentcore` CLI.
+3. **Frontend** — a Next.js app run locally against the orchestrator.
 
 ## Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Deploy Backend Agents](#deploy-backend-agents)
-   - [1.1 Strategy Generator Agent](#11-strategy-generator-agent)
-   - [1.2 Result Summarizer Agent](#12-result-summarizer-agent)
-   - [1.3 Quant Agent](#13-quant-agent)
-3. [Deploy Frontend](#deploy-frontend)
-
-
----
-
-## Prerequisites
-
-Before starting the deployment, ensure you have:
-
-- **AWS CLI** configured with appropriate credentials
-- **AgentCore CLI** installed and configured
-- **Docker** installed and running (required for Lambda container deployments)
-- **Node.js** (v22 or later) for frontend deployment
-- **Python 3.9+** for backend agents
-- **jq** for JSON processing
-- **zip** utility for creating deployment packages
-
-### Required AWS Permissions
-
-Your AWS credentials need permissions for:
-- Bedrock AgentCore operations
-- Lambda functions (create, update, invoke)
-- IAM roles and policies (create, attach)
-- Cognito User Pool operations
-- S3 Tables access
+1. [Prerequisites](#1-prerequisites)
+2. [Backend infrastructure (AWS CDK)](#2-backend-infrastructure-aws-cdk)
+   - [2.1 Bootstrap & deploy the stacks](#21-bootstrap--deploy-the-stacks)
+   - [2.2 Load market data](#22-load-market-data)
+3. [Agents (AgentCore Runtime)](#3-agents-agentcore-runtime)
+   - [3.1 Strategy Generator](#31-strategy-generator)
+   - [3.2 Result Summarizer](#32-result-summarizer)
+   - [3.3 Quant Agent (orchestrator)](#33-quant-agent-orchestrator)
+4. [Frontend (Next.js)](#4-frontend-nextjs)
 
 ---
 
-## Deploy Backend Agents
+## 1. Prerequisites
 
-### 1.1 Strategy Generator Agent
+- **AWS CLI** configured with credentials (e.g. `export AWS_PROFILE=<profile> AWS_REGION=us-east-1`)
+- **AWS CDK v2** (`npm install -g aws-cdk`) and **Node.js 20+**
+- **Docker** (or **colima**) running — CDK builds the Lambda container image locally
+- **Python 3.11+**
+- **`agentcore` CLI** (install with `pipx install bedrock-agentcore-starter-toolkit`) for the agents
+- **`jq`** for JSON processing
 
-The Strategy Generator Agent converts natural language trading strategies into executable Backtrader code.
-
-#### Steps:
-
-1. **Navigate to the agent directory:**
-   ```bash
-   cd backend-agents/strategy-generator-agent
-   ```
-
-2. **Create environment file from sample:**
-   ```bash
-   cp .env.sample .env
-   ```
-
-3. **Edit `.env` file** (if needed):
-   ```bash
-   # for exmaple, Customize AWS_REGION if deploying to a different region
-   AWS_REGION=us-east-1
-   ```
-
-4. **Deploy the agent:**
-   ```bash
-   chmod +x deploy_to_agentcore.sh
-   ./deploy_to_agentcore.sh
-   ```
-
-5. **Save the Runtime ARN:**
-   After deployment, the script will output the Runtime ARN. Save this value - you'll need it for the Quant Agent configuration.
-   
-   Example output:
-   ```
-   Runtime ARN: arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/strategy_generator-xxx
-   ```
-
+Your AWS credentials need permissions for: CloudFormation, S3 Tables, Lambda, ECR, IAM, Cognito, and Bedrock AgentCore.
 
 ---
 
-### 1.2 Result Summarizer Agent
+## 2. Backend infrastructure (AWS CDK)
 
-The Result Summarizer Agent analyzes backtest results and generates comprehensive performance reports.
+The [`infra/`](./infra) directory is a CDK app with two stacks:
 
-#### Steps:
+- **`agentic-backtest-data`** (DataStack) — the S3 Tables *table bucket* `agentic-backtest-market-data` (the durable data container). The Iceberg table/schema/rows are loaded separately (see 2.2), because Iceberg table management is pyiceberg's job, not CloudFormation's.
+- **`agentic-backtest-backend`** (BackendStack) — the market-data Lambda (arm64 container image), Cognito (user pool + domain + M2M client), and the AgentCore Gateway + Target that exposes the Lambda as an MCP tool.
 
-1. **Navigate to the agent directory:**
-   ```bash
-   cd backend-agents/result-summarizer-agent
-   ```
+### 2.1 Bootstrap & deploy the stacks
 
-2. **Create environment file from sample:**
-   ```bash
-   cp .env.sample .env
-   ```
+```bash
+cd infra
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-3. **Edit `.env` file** (if needed):
-   ```bash
-   # for exmaple, Customize AWS_REGION if deploying to a different region
-   AWS_REGION=us-east-1
-   ```
+# One-time per account/region:
+cdk bootstrap aws://<ACCOUNT_ID>/us-east-1
 
-4. **Deploy the agent:**
-   ```bash
-   chmod +x deploy_to_agentcore.sh
-   ./deploy_to_agentcore.sh
-   ```
+# Deploy both stacks (Docker/colima must be running for the Lambda image build):
+cdk deploy agentic-backtest-data agentic-backtest-backend
+```
 
-5. **Save the Runtime ARN:**
-   After deployment, save the Runtime ARN for the Quant Agent configuration.
-   
-   Example output:
-   ```
-   Runtime ARN: arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/results_summary-xxx
-   ```
+> Keep the `.venv` activated whenever you run `cdk` — `cdk.json` invokes `python3 app.py`, which needs `aws-cdk-lib` on the path.
 
----
+Note the stack outputs (printed on deploy, or via `aws cloudformation describe-stacks`):
 
-### 1.3 Quant Agent
+- **`GatewayUrl`** — the MCP endpoint is this URL **+ `/mcp`** (the `GatewayMcpUrl` output gives it directly)
+- **`CognitoDomain`**, **`CognitoClientId`**, **`CognitoUserPoolId`**
 
-The Quant Agent orchestrates the entire backtesting workflow, coordinating between strategy generation, market data retrieval, backtesting execution, and results analysis.
+The Cognito **client secret** is intentionally *not* a CloudFormation output. Fetch it when you need it:
 
-#### 1.3.1 Deploy Market Data Tool
+```bash
+aws cognito-idp describe-user-pool-client \
+  --user-pool-id <CognitoUserPoolId> --client-id <CognitoClientId> \
+  --query 'UserPoolClient.ClientSecret' --output text
+```
 
-Before deploying the Quant Agent, you need to deploy the Market Data MCP tool that provides historical market data.
+### 2.2 Load market data
 
-1. **Navigate to the market data tool directory:**
-   ```bash
-   cd backend-agents/quant-agent/tools/market_data_mcp/deployment
-   ```
+CDK creates the table *bucket*; this idempotent pyiceberg loader creates the `daily_data` table and loads rows. It performs a **full reload** on every run, so it's safe to re-run.
 
-2. **Create environment file:**
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+cd backend-agents/quant-agent/tools/market_data_mcp
+python3 -m venv .venv && source .venv/bin/activate      # separate from the CDK venv
+pip install -r requirements.txt
+python data/load_market_data.py                          # loads data/amzn.daily.csv → agentic-backtest-market-data
+```
 
-3. **Edit `.env` file** (customize if needed):
-   ```bash
-   FUNCTION_NAME="market-data-mcp"
-   GATEWAY_NAME="market-data-mcp-gateway"
-   TARGET_NAME="market-data-lambda-target"
-   REGION="us-east-1"
+Verify the Lambda can read the bucket end to end:
 
-   S3_TABLES_BUCKET="market-data-unique-name"
-   S3_TABLES_REGION="us-east-1"
-   ...
-   ```
-
-4. **Run the complete deployment:**
-   ```bash
-   chmod +x deploy_all.sh
-   ./deploy_all.sh
-   ```
-
-5. **Save deployment outputs:**
-   
-   After deployment, note these values from the output:
-   
-   - **Lambda Function ARN**: `arn:aws:lambda:us-east-1:123456789012:function:market-data-mcp`
-   - **Gateway ARN**: `arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/market-data-mcp-gateway-xxx`
-   - **Gateway URL**: `https://market-data-mcp-gateway-xxx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp`
-   - **Cognito User Pool ID**: `us-east-1_xxxxxxxxx`
-   - **Cognito Client ID**: `xxxxxxxxxxxxxxxxxxxxxxxxxx`
-   - **Cognito Client Secret**: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
-
-   **Note:** If the script doesn't automatically update the `.env` file with Gateway ARN and URL, you may need to manually update them from the script output.
-
-6. **Verify deployment:**
-   ```bash
-   # Test Lambda function
-   aws lambda invoke \
-     --function-name market-data-mcp \
-     --payload '{"symbol": "AMZN"}' \
-     response.json && cat response.json
-   ```
-
-For detailed deployment instructions, refer to:
-- `backend-agents/quant-agent/tools/market_data_mcp/deployment/README.md`
-
-#### 1.3.2 Authentication Configuration
-
-**Note:** The system now uses **client_credentials** OAuth grant type (machine-to-machine authentication) instead of user password authentication. You no longer need to manually create Cognito users.
-
-The deployment script in step 1.3.1 automatically configures the Cognito App Client with the appropriate settings for client_credentials flow. The Quant Agent authenticates directly using the Client ID and Client Secret.
-
-#### 1.3.3 Deploy Quant Agent
-
-1. **Navigate to the Quant Agent directory:**
-   ```bash
-   cd backend-agents/quant-agent
-   ```
-
-2. **Create environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Edit `.env` file with values from previous steps:**
-   ```bash
-   # AgentCore Gateway Configuration (from step 1.3.1)
-   AGENTCORE_GATEWAY_URL=https://market-data-mcp-gateway-xxx.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp
-
-   # Runtime ARNs (from steps 1.1 and 1.2)
-   STRATEGY_GENERATOR_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/strategy_generator-XJMGBxAgBL
-   BACKTEST_SUMMARY_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/results_summary-zug3B14PlT
-
-   # Cognito Authentication Configuration (from step 1.3.1)
-   # Using client_credentials grant (machine-to-machine auth)
-   COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
-   COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-   COGNITO_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-   # AWS Configuration
-   AWS_REGION=us-east-1
-
-   # Debug Settings
-   DEBUG=true
-   BYPASS_TOOL_CONSENT=true
-   ```
-
-4. **Deploy the agent:**
-   ```bash
-   chmod +x deploy_to_agentcore.sh
-   ./deploy_to_agentcore.sh
-   ```
-
-5. **Save the Runtime ARN:**
-   After deployment, save the Quant Agent Runtime ARN for frontend configuration.
-   
-   Example output:
-   ```
-   Runtime ARN: arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/quant_agent-xxxxxxxxxx
-   ```
-
-#### 1.3.4 Assign IAM Policy to Quant Agent
-
-The Quant Agent needs additional IAM permissions to authenticate with Cognito.
-
-1. **Find the Quant Agent IAM Role:**
-   In AWS Agentcore runtime, you can find the IAM role in Agent runtime -> Permissions -> IAM service role, like AmazonBedrockAgentCoreSDKRuntime-us-east-1-xxx.
-
-2. **Create IAM policy file:**
-   ```bash
-   cat > cognito-policy.json << 'EOF'
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": [
-           "cognito-idp:AdminInitiateAuth",
-           "cognito-idp:AdminRespondToAuthChallenge",
-           "cognito-idp:AdminGetUser"
-         ],
-         "Resource": [
-           "arn:aws:cognito-idp:us-east-1:YOUR_ACCOUNT_ID:userpool/YOUR_USER_POOL_ID"
-         ]
-       }
-     ]
-   }
-   EOF
-   ```
-
-   ```bash
-   # Replace YOUR_ACCOUNT_ID with your AWS account ID
-   # Replace YOUR_USER_POOL_ID with the Cognito User Pool ID from step 1.3.1
-   ```
-
-3. **Attach the policy to the Quant Agent role:**
-   ```bash
-   # Create the policy
-   aws iam create-policy \
-     --policy-name QuantAgentCognitoAccess \
-     --policy-document file://cognito-policy.json
-   
-   # Attach to the role
-   aws iam attach-role-policy \
-     --role-name AmazonBedrockAgentCoreSDKRuntime-us-east-1-xxx \
-     --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/QuantAgentCognitoAccess
-   ```
-
+```bash
+aws lambda invoke --function-name agentic-backtest-market-data \
+  --payload '{"symbol":"AMZN","limit":5}' --cli-binary-format raw-in-base64-out out.json
+jq '.body | fromjson | .metadata' out.json   # expect success:true, total_rows:5
+```
 
 ---
 
-## Deploy Frontend
+## 3. Agents (AgentCore Runtime)
 
-The frontend provides a web interface for interacting with the Quant Agent system.
+Each agent is deployed with the `agentcore` CLI via its `deploy_to_agentcore.sh`, which reads a local `.env` and passes the values as runtime environment variables.
 
-### Steps:
+### 3.1 Strategy Generator
 
-1. **Navigate to the frontend directory:**
-   ```bash
-   cd frontend-nextjs
-   ```
+Converts a natural-language strategy into executable Backtrader code.
 
-2. **Follow the deployment instructions:**
-   Refer to `frontend-nextjs/README.md` for detailed frontend deployment steps.
+```bash
+cd backend-agents/strategy-generator-agent
+cp .env.sample .env        # model is pinned to us.anthropic.claude-opus-4-6-v1 (opus-4-7 is account-gated)
+./deploy_to_agentcore.sh
+```
 
-   Quick summary:
-   ```bash
-   # Install dependencies
-   npm install
-   
-   # Configure environment variables
-   cp .env.example .env.local
-   # Edit .env.local with your Quant Agent Runtime ARN
-   
-   # Run development server
-   npm run dev
-   
-   # Or build for production
-   npm run build
-   npm start
-   ```
+Save the Runtime ARN from the output.
 
-For complete frontend deployment instructions, see: `frontend-nextjs/README.md`
+### 3.2 Result Summarizer
 
-### Test Frontend
+Turns raw backtest metrics into a readable report (Amazon Nova).
 
-1. Open your browser to `http://localhost:3000` (or your deployed URL)
-2. Enter a trading strategy query
-3. Verify the complete workflow executes successfully
+```bash
+cd backend-agents/result-summarizer-agent
+cp .env.sample .env
+./deploy_to_agentcore.sh
+```
 
+Save the Runtime ARN.
+
+### 3.3 Quant Agent (orchestrator)
+
+Create `backend-agents/quant-agent/.env` from the CDK outputs (section 2.1) and the two agent ARNs above:
+
+```bash
+AWS_REGION=us-east-1
+QUANT_AGENT_MODEL_ID=us.anthropic.claude-sonnet-4-6
+
+# Runtime ARNs from 3.1 and 3.2
+STRATEGY_GENERATOR_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:<ACCOUNT_ID>:runtime/strategy_generator-xxxx
+BACKTEST_SUMMARY_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:<ACCOUNT_ID>:runtime/results_summary-xxxx
+
+# Market-data backend from the CDK stack outputs (2.1)
+AGENTCORE_GATEWAY_URL=<GatewayUrl>/mcp
+COGNITO_DOMAIN=<CognitoDomain>
+COGNITO_CLIENT_ID=<CognitoClientId>
+COGNITO_CLIENT_SECRET=<from describe-user-pool-client>
+```
+
+Then deploy:
+
+```bash
+cd backend-agents/quant-agent
+./deploy_to_agentcore.sh
+```
+
+Save the Quant Agent Runtime ARN for the frontend.
+
+> **Auth note:** the Quant Agent authenticates to the Gateway with the Cognito **client-credentials** grant (client id + secret → bearer JWT). No Cognito users and no extra IAM policy on the agent role are required — the Gateway validates the JWT against the Cognito pool's OIDC discovery URL.
+
+---
+
+## 4. Frontend (Next.js)
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+# In .env.local set:
+#   AGENTCORE_ARN=<Quant Agent Runtime ARN from 3.3>
+#   AWS_REGION=us-east-1
+#   NEXT_PUBLIC_APP_VERSION=1.0.0
+export AWS_PROFILE=<profile>   # the server-side API routes invoke the agent via the AWS SDK
+npm run dev                    # http://localhost:3000
+```
+
+### Test
+
+1. Open `http://localhost:3000`.
+2. Submit a strategy (e.g. *EMA 5/20 crossover on AMZN, 1 year*) and confirm a performance report renders.
+3. Ask the chat *"list my last 3 backtests"* to confirm the memory path.
+
+---
+
+## Teardown
+
+```bash
+cd infra && source .venv/bin/activate
+cdk destroy agentic-backtest-backend agentic-backtest-data
+```
+
+The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. Delete the three agent runtimes with `aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id <id>`.
 
 ---
 
 ## Support and Resources
 
-- **AgentCore Documentation:** https://docs.aws.amazon.com/bedrock/latest/userguide/agents.html
-- **Docker Installation:** https://docs.docker.com/get-docker/
-
-For issues or questions, refer to the individual README files in each component directory.
+- **Amazon Bedrock AgentCore:** https://docs.aws.amazon.com/bedrock/latest/userguide/agents.html
+- **AWS CDK (Python):** https://docs.aws.amazon.com/cdk/v2/guide/work-with-cdk-python.html
+- **Docker:** https://docs.docker.com/get-docker/ · **colima:** https://github.com/abiosoft/colima
