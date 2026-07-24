@@ -239,7 +239,12 @@ class BacktestTool():
             try:
                 cerebro.broker.setcash(params.get('initial_cash', 100000))
                 cerebro.broker.setcommission(commission=params.get('commission', 0.001))
-                print(f"✅ Broker parameters set - Cash: {params.get('initial_cash', 100000)}, Commission: {params.get('commission', 0.001)}")
+                # Position sizing: allocate a percentage of capital per trade so
+                # returns are meaningful. A bare self.buy() defaults to 1 share,
+                # which is negligible on a large book. Strategies that pass an
+                # explicit size to buy()/sell() still override this default.
+                cerebro.addsizer(bt.sizers.PercentSizer, percents=params.get('position_pct', 95))
+                print(f"✅ Broker parameters set - Cash: {params.get('initial_cash', 100000)}, Commission: {params.get('commission', 0.001)}, Position: {params.get('position_pct', 95)}% of capital")
             except Exception as e:
                 print(f"❌ Broker setup failed: {e}")
                 return {'error': f'Broker setup failed: {str(e)}'}
