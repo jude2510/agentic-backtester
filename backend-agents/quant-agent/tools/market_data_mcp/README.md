@@ -10,9 +10,10 @@ This tool provides:
 
 ## Core Files
 
-- **`lambda_function.py`** - Main Lambda function that serves market data
-- **`requirements.txt`** - Python dependencies for the Lambda function
-- **`deployment/`** - All deployment and infrastructure scripts
+- **`lambda_function.py`** - Lambda handler that serves market data from S3 Tables
+- **`Dockerfile`** - arm64 container image for the Lambda (built + pushed by CDK)
+- **`requirements.txt`** - Python dependencies (Lambda container + local loader)
+- **`data/load_market_data.py`** - idempotent pyiceberg loader (creates the Iceberg table and loads `amzn.daily.csv`)
 
 ## Supported Symbols
 
@@ -84,11 +85,11 @@ print(json.dumps(result, indent=2))
 
 ## Deployment
 
-See the `deployment/` directory for the deployment of Lambda and Agentcore Gateway.
+The Lambda, S3 Tables bucket, Cognito, and AgentCore Gateway are provisioned by the **AWS CDK** app in [`infra/`](../../../../infra) (stacks `agentic-backtest-data` and `agentic-backtest-backend`). Load market data with `data/load_market_data.py`. See the repo's [DEPLOYMENT_GUIDE.md](../../../../DEPLOYMENT_GUIDE.md).
 
 ## Environment Variables
 
 The Lambda function uses these environment variables:
 - `S3_TABLES_BUCKET`: S3 Tables bucket name
-- `S3_TABLES_NAMESPACE`: Table namespace (default: "stock_data")
-- `S3_TABLES_TABLE`: Table name (default: "stock_prices")
+- `S3_TABLES_NAMESPACE`: Table namespace (default: "daily_data")
+- `S3_TABLES_TABLE`: Table name (default: "daily_data")
