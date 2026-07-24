@@ -1,58 +1,24 @@
+# Infrastructure (AWS CDK)
 
-# Welcome to your CDK Python project!
+The Agentic Backtester's backend is defined here as Infrastructure-as-Code with **AWS CDK (Python)** — two stacks under the `agentic-backtest` prefix.
 
-This is a blank project for CDK development with Python.
+## Stacks
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+- **`agentic-backtest-data`** (`infra/data_stack.py`) — the S3 Tables *table bucket* `agentic-backtest-market-data`, the durable market-data store. The Iceberg table/schema/rows are loaded separately by [`load_market_data.py`](../backend-agents/quant-agent/tools/market_data_mcp/data/load_market_data.py), because Iceberg table management belongs to pyiceberg, not CloudFormation.
+- **`agentic-backtest-backend`** (`infra/backend_stack.py`) — the market-data **Lambda** (arm64 container image), **Cognito** (user pool + domain + machine-to-machine client for gateway auth), and the **AgentCore Gateway + Target** that exposes the Lambda as an MCP tool.
 
-This project is set up like a standard Python project.  The initialization
-process also creates a virtualenv within this project, stored under the `.venv`
-directory.  To create the virtualenv it assumes that there is a `python3`
-(or `python` for Windows) executable in your path with access to the `venv`
-package. If for any reason the automatic creation of the virtualenv fails,
-you can create the virtualenv manually.
+## Usage
 
-To manually create a virtualenv on MacOS and Linux:
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-```
-$ python3 -m venv .venv
-```
-
-After the init process completes and the virtualenv is created, you can use the following
-step to activate your virtualenv.
-
-```
-$ source .venv/bin/activate
+cdk bootstrap aws://<ACCOUNT_ID>/us-east-1                    # one-time per account/region
+cdk deploy agentic-backtest-data agentic-backtest-backend    # Docker/colima must be running
 ```
 
-If you are a Windows platform, you would activate the virtualenv like this:
+Keep `.venv` activated for all `cdk` commands — `cdk.json` runs `python3 app.py`, which needs `aws-cdk-lib` on the path.
 
-```
-% .venv\Scripts\activate.bat
-```
+Handy commands: `cdk ls` (list stacks) · `cdk synth <stack>` (view the generated CloudFormation) · `cdk diff <stack>` · `cdk destroy <stack>`.
 
-Once the virtualenv is activated, you can install the required dependencies.
-
-```
-$ pip install -r requirements.txt
-```
-
-At this point you can now synthesize the CloudFormation template for this code.
-
-```
-$ cdk synth
-```
-
-To add additional dependencies, for example other CDK libraries, just add
-them to your `requirements.txt` file and rerun the `python -m pip install -r requirements.txt`
-command.
-
-## Useful commands
-
- * `cdk ls`          list all stacks in the app
- * `cdk synth`       emits the synthesized CloudFormation template
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk docs`        open CDK documentation
-
-Enjoy!
+See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) for the full end-to-end flow (backend → data load → agents → frontend).

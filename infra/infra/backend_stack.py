@@ -52,7 +52,7 @@ class BackendStack(Stack):
             },
         )
 
-        # Read access to S3 Tables. Managed policy matches the workshop; can be
+        # Read access to S3 Tables. Broad managed policy for now; can be
         # tightened to a scoped read-only policy later (a nice least-privilege
         # follow-up).
         market_data_fn.role.add_managed_policy(
