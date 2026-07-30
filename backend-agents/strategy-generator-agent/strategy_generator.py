@@ -84,6 +84,7 @@ Generate clean, efficient Backtrader strategy code that:
 2. Uses proper Backtrader indicators (EMA, SMA, RSI, ROC)
 3. Handles stop loss and take profit if specified
 4. Includes proper error handling and parameter validation
+5. Sizes each position as a percentage of available cash — NEVER a fixed share count — so buy orders are always affordable. Compute the size with `size = int(self.broker.getcash() * 0.95 / self.data.close[0])` and only place the order when size > 0.
 
 Always return complete, runnable Python code with proper imports and class structure.
 
@@ -151,7 +152,9 @@ Generate a complete Backtrader strategy class from this JSON configuration:
 Requirements:
 1. Class name: {config['name'].replace(' ', '')}Strategy
 2. Stock symbol: {config['stock_symbol']}
-3. Max positions: {config['max_positions']}
+3. Position sizing: buy ~95% of available cash on each entry using
+   `size = int(self.broker.getcash() * 0.95 / self.data.close[0])`, and only buy when size > 0.
+   Do NOT use a fixed number of shares or "max positions" as the order size.
 4. Stop loss: {config.get('stop_loss', 'None')}% if specified
 5. Take profit: {config.get('take_profit', 'None')}% if specified
 
@@ -179,8 +182,10 @@ class RSIStrategy(bt.Strategy):
     def next(self):
         if not self.position:
             if self.rsi < 30:  # Buy when RSI < 30
-                self.buy()
-                self.buy_price = self.data.close[0]
+                size = int(self.broker.getcash() * 0.95 / self.data.close[0])
+                if size > 0:
+                    self.buy(size=size)
+                    self.buy_price = self.data.close[0]
         else:
             # Stop loss and take profit
             if self.buy_price:
