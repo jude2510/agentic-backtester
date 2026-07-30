@@ -68,6 +68,34 @@ class TradeRecorder(bt.Analyzer):
     def get_analysis(self):
         return {'trade_log': self.trade_log}
 
+
+def _guard_buy_size(strategy_cls, position_pct: int = 95):
+    """Wrap a strategy so every buy() is capped to an affordable share count.
+
+    LLM-generated strategies sometimes pass a fixed share size (e.g. the user's
+    ``max_positions``) that costs more than the available cash — Backtrader then
+    rejects the order and the backtest records 0 trades. This guard clamps any
+    buy() down to ~position_pct% of current cash (and sizes a bare buy() the same
+    way), so orders are always affordable. Sells are left untouched (they close
+    the open position); a smaller explicit buy size is respected.
+    """
+    frac = max(1, min(position_pct, 100)) / 100.0
+
+    class SizeGuarded(strategy_cls):
+        def buy(self, *args, **kwargs):
+            price = float(self.data.close[0])
+            if price > 0:
+                affordable = int(self.broker.getcash() * frac / price)
+                requested = kwargs.get('size')
+                if requested is None or requested > affordable:
+                    kwargs['size'] = max(affordable, 0)
+            return super().buy(*args, **kwargs)
+
+    SizeGuarded.__name__ = strategy_cls.__name__
+    SizeGuarded.__qualname__ = strategy_cls.__name__
+    return SizeGuarded
+
+
 class BacktestTool():
     """Tool that executes backtests using Backtrader"""
 
@@ -186,7 +214,7 @@ class BacktestTool():
             # STEP 7: Add strategy
             print(f"📈 STEP 5: Adding strategy to Cerebro...")
             try:
-                cerebro.addstrategy(strategy_class)
+                cerebro.addstrategy(_guard_buy_size(strategy_class, params.get('position_pct', 95)))
                 # print(f"✅ Strategy added successfully: {strategy_class.__name__}")
             except Exception as e:
                 print(f"❌ Strategy addition failed: {e}")
@@ -239,11 +267,10 @@ class BacktestTool():
             try:
                 cerebro.broker.setcash(params.get('initial_cash', 100000))
                 cerebro.broker.setcommission(commission=params.get('commission', 0.001))
-                # Position sizing: allocate a percentage of capital per trade so
-                # returns are meaningful. A bare self.buy() defaults to 1 share,
-                # which is negligible on a large book. Strategies that pass an
-                # explicit size to buy()/sell() still override this default.
-                cerebro.addsizer(bt.sizers.PercentSizer, percents=params.get('position_pct', 95))
+                # Position sizing is enforced by _guard_buy_size (applied at
+                # addstrategy): every buy() is capped to ~position_pct% of cash so
+                # orders are always affordable, regardless of what the generated
+                # strategy requests.
                 print(f"✅ Broker parameters set - Cash: {params.get('initial_cash', 100000)}, Commission: {params.get('commission', 0.001)}, Position: {params.get('position_pct', 95)}% of capital")
             except Exception as e:
                 print(f"❌ Broker setup failed: {e}")
