@@ -56,7 +56,30 @@ if [ -f "quant_agent.py" ]; then
     
     echo "✅ Strategy Quant deployed successfully!"
     echo ""
-    
+
+    # --- Ensure the quant agent can invoke its sub-agents (idempotent) --------
+    # The toolkit-created execution role does NOT grant cross-runtime
+    # bedrock-agentcore:InvokeAgentRuntime by default; without it the agent gets
+    # AccessDenied on the Strategy Generator / Results Summarizer and silently
+    # falls back to inline strategy generation. Re-applied on every deploy so it
+    # survives a role recreation; role + sub-agent ARNs are discovered dynamically.
+    echo "🔐 Ensuring InvokeAgentRuntime permission on sub-agents..."
+    ROLE_NAME=$(awk -F': ' '/execution_role: /{print $2; exit}' .bedrock_agentcore.yaml | tr -d '[:space:]'); ROLE_NAME="${ROLE_NAME##*/}"
+    STRAT_ARN=$(grep -E '^STRATEGY_GENERATOR_RUNTIME_ARN=' .env | cut -d= -f2- | tr -d '" ')
+    SUMM_ARN=$(grep -E '^BACKTEST_SUMMARY_RUNTIME_ARN=' .env | cut -d= -f2- | tr -d '" ')
+    if [ -n "$ROLE_NAME" ] && [ -n "$STRAT_ARN" ] && [ -n "$SUMM_ARN" ]; then
+        aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name QuantAgentInvokeSubAgents \
+            --region "$AWS_REGION" \
+            --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"InvokeSubAgents\",\"Effect\":\"Allow\",\"Action\":\"bedrock-agentcore:InvokeAgentRuntime\",\"Resource\":[\"$STRAT_ARN\",\"$STRAT_ARN/*\",\"$SUMM_ARN\",\"$SUMM_ARN/*\"]}]}" \
+            && echo "   ✅ InvokeAgentRuntime granted to $ROLE_NAME" \
+            || echo "   ⚠️ Could not apply policy — grant it manually if backtests fall back to inline generation"
+    else
+        echo "   ⚠️ Skipped (could not resolve role name or sub-agent ARNs)"
+    fi
+    echo ""
+
     # Check status
     echo "📊 Checking agent status..."
     agentcore status --agent quant_agent
