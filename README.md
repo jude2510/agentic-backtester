@@ -2,8 +2,6 @@
 
 A multi-agent system that turns a plain-English trading idea into a backtested strategy. You describe a strategy in natural language; a team of specialized AI agents generates the strategy code, fetches historical market data, runs the backtest, and writes up the results — coordinated end-to-end on Amazon Bedrock AgentCore.
 
-> **Portfolio / learning project.** Built on AWS's [`agentic_backtesting` sample](https://github.com/aws-samples/sample-tech-for-trading) (MIT-0), then extended and re-architected for local development — including replacing the original sample's imperative shell-script deployment with an **AWS CDK (Python)** infrastructure-as-code layer I own end to end. See [Roadmap](#roadmap) for what's original.
-
 ## Disclaimer
 
 **This project is for educational and research purposes only.** The backtesting results, trading strategies, and any analysis it produces do not constitute financial advice, investment recommendations, or an offer to buy or sell any securities. Past performance does not guarantee future results. Trading and investing involve substantial risk of loss. Always consult a qualified financial advisor before making investment decisions.
