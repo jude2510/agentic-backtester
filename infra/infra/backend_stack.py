@@ -21,9 +21,7 @@ from constructs import Construct
 
 # Absolute path to the market-data component (Dockerfile + lambda live here).
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_MARKET_DATA_DIR = os.path.join(
-    _REPO_ROOT, "backend-agents", "quant-agent", "tools", "market_data_mcp"
-)
+_MARKET_DATA_DIR = os.path.join(_REPO_ROOT, "market-data-mcp")
 
 
 class BackendStack(Stack):

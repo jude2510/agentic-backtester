@@ -3,7 +3,7 @@
 This guide deploys the Agentic Backtester end to end:
 
 1. **Backend infrastructure** — defined as Infrastructure-as-Code with **AWS CDK (Python)**: two stacks under the `agentic-backtest` prefix that provision the S3 Tables market-data store, the market-data Lambda, Cognito (machine-to-machine auth), and the AgentCore Gateway + Target (MCP). This replaces the original sample's imperative shell scripts.
-2. **Agents** — three Strands agents deployed to AgentCore Runtime with the `agentcore` CLI.
+2. **Agents** — three Strands agents deployed to AgentCore Runtime as a single `@aws/agentcore` CLI project.
 3. **Frontend** — a Next.js app run locally against the orchestrator.
 
 ## Table of Contents
@@ -13,9 +13,8 @@ This guide deploys the Agentic Backtester end to end:
    - [2.1 Bootstrap & deploy the stacks](#21-bootstrap--deploy-the-stacks)
    - [2.2 Load market data](#22-load-market-data)
 3. [Agents (AgentCore Runtime)](#3-agents-agentcore-runtime)
-   - [3.1 Strategy Generator](#31-strategy-generator)
-   - [3.2 Result Summarizer](#32-result-summarizer)
-   - [3.3 Quant Agent (orchestrator)](#33-quant-agent-orchestrator)
+   - [3.1 Point the config at your backend](#31-point-the-config-at-your-backend)
+   - [3.2 Deploy](#32-deploy)
 4. [Frontend (Next.js)](#4-frontend-nextjs)
 
 ---
@@ -26,7 +25,7 @@ This guide deploys the Agentic Backtester end to end:
 - **AWS CDK v2** (`npm install -g aws-cdk`) and **Node.js 20+**
 - **Docker** (or **colima**) running — CDK builds the Lambda container image locally
 - **Python 3.11+**
-- **`agentcore` CLI** (install with `pipx install bedrock-agentcore-starter-toolkit`) for the agents
+- **`agentcore` CLI** — the AWS AgentCore CLI (`npm install -g @aws/agentcore`), plus **[uv](https://docs.astral.sh/uv/)** on the path (it builds each agent's Python package)
 - **`jq`** for JSON processing
 
 Your AWS credentials need permissions for: CloudFormation, S3 Tables, Lambda, ECR, IAM, Cognito, and Bedrock AgentCore.
@@ -74,7 +73,7 @@ aws cognito-idp describe-user-pool-client \
 CDK creates the table *bucket*; this idempotent pyiceberg loader creates the `daily_data` table and loads rows. It performs a **full reload** on every run, so it's safe to re-run.
 
 ```bash
-cd backend-agents/quant-agent/tools/market_data_mcp
+cd market-data-mcp
 python3 -m venv .venv && source .venv/bin/activate      # separate from the CDK venv
 pip install -r requirements.txt
 python data/load_market_data.py                          # loads data/amzn.daily.csv → agentic-backtest-market-data
@@ -92,61 +91,32 @@ jq '.body | fromjson | .metadata' out.json   # expect success:true, total_rows:5
 
 ## 3. Agents (AgentCore Runtime)
 
-Each agent is deployed with the `agentcore` CLI via its `deploy_to_agentcore.sh`, which reads a local `.env` and passes the values as runtime environment variables.
+All three agents — Strategy Generator, Result Summarizer, and the Quant Agent orchestrator — form a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project under [`agents/agenticbacktester/`](./agents/agenticbacktester). The CLI provisions every runtime, memory, and IAM role via one CloudFormation stack (`AgentCore-agenticbacktester-default`).
 
-### 3.1 Strategy Generator
+- **Source** lives in `app/<agent>/`, each with a `pyproject.toml` build spec.
+- **Non-secret config** (model id, gateway URL, Cognito domain/client id, the sub-agent ARNs) is committed per-runtime under `envVars` in [`agentcore/agentcore.json`](./agents/agenticbacktester/agentcore/agentcore.json).
+- **Secrets** go in `agentcore/.env.local` (gitignored, injected at deploy). The only one required is the Cognito client secret.
+- **Memory ids** are injected automatically as `MEMORY_<NAME>_ID` — no manual wiring.
 
-Converts a natural-language strategy into executable Backtrader code.
+### 3.1 Point the config at your backend
 
-```bash
-cd backend-agents/strategy-generator-agent
-cp .env.sample .env        # model is pinned to us.anthropic.claude-opus-4-6-v1 (opus-4-7 is account-gated)
-./deploy_to_agentcore.sh
-```
-
-Save the Runtime ARN from the output.
-
-### 3.2 Result Summarizer
-
-Turns raw backtest metrics into a readable report (Amazon Nova).
+After the CDK stacks are up (section 2), update the `quant_agent` runtime's `envVars` in `agentcore/agentcore.json` to match your stack outputs — `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`), `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID` — then put the client secret in `.env.local`:
 
 ```bash
-cd backend-agents/result-summarizer-agent
-cp .env.sample .env
-./deploy_to_agentcore.sh
+cd agents/agenticbacktester
+echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" >> agentcore/.env.local
 ```
 
-Save the Runtime ARN.
-
-### 3.3 Quant Agent (orchestrator)
-
-Create `backend-agents/quant-agent/.env` from the CDK outputs (section 2.1) and the two agent ARNs above:
+### 3.2 Deploy
 
 ```bash
-AWS_REGION=us-east-1
-QUANT_AGENT_MODEL_ID=us.anthropic.claude-sonnet-4-6
-
-# Runtime ARNs from 3.1 and 3.2
-STRATEGY_GENERATOR_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:<ACCOUNT_ID>:runtime/strategy_generator-xxxx
-BACKTEST_SUMMARY_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:<ACCOUNT_ID>:runtime/results_summary-xxxx
-
-# Market-data backend from the CDK stack outputs (2.1)
-AGENTCORE_GATEWAY_URL=<GatewayUrl>/mcp
-COGNITO_DOMAIN=<CognitoDomain>
-COGNITO_CLIENT_ID=<CognitoClientId>
-COGNITO_CLIENT_SECRET=<from describe-user-pool-client>
+agentcore deploy -y      # builds + deploys all three runtimes
+agentcore status         # confirm each runtime is READY; note the quant_agent ARN
 ```
 
-Then deploy:
+The `quant_agent` Runtime ARN from `agentcore status` is what the frontend needs (section 4).
 
-```bash
-cd backend-agents/quant-agent
-./deploy_to_agentcore.sh
-```
-
-Save the Quant Agent Runtime ARN for the frontend.
-
-> **Auth note:** the Quant Agent authenticates to the Gateway with the Cognito **client-credentials** grant (client id + secret → bearer JWT). No Cognito users and no extra IAM policy on the agent role are required — the Gateway validates the JWT against the Cognito pool's OIDC discovery URL.
+> **Auth note:** the Quant Agent authenticates to the Gateway with the Cognito **client-credentials** grant (client id + secret → bearer JWT); the Gateway validates it against the Cognito pool's OIDC discovery URL. It reaches the two sub-agents via a `bedrock-agentcore:InvokeAgentRuntime` grant on its execution role.
 
 ---
 
@@ -179,7 +149,7 @@ cd infra && source .venv/bin/activate
 cdk destroy agentic-backtest-backend agentic-backtest-data
 ```
 
-The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. Delete the three agent runtimes with `aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id <id>`.
+The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. The three agents are a single CloudFormation stack — remove them by running `agentcore destroy` from `agents/agenticbacktester/`, or with `aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default`.
 
 ---
 

@@ -4,7 +4,7 @@ The Agentic Backtester's backend is defined here as Infrastructure-as-Code with 
 
 ## Stacks
 
-- **`agentic-backtest-data`** (`infra/data_stack.py`) — the S3 Tables *table bucket* `agentic-backtest-market-data`, the durable market-data store. The Iceberg table/schema/rows are loaded separately by [`load_market_data.py`](../backend-agents/quant-agent/tools/market_data_mcp/data/load_market_data.py), because Iceberg table management belongs to pyiceberg, not CloudFormation.
+- **`agentic-backtest-data`** (`infra/data_stack.py`) — the S3 Tables *table bucket* `agentic-backtest-market-data`, the durable market-data store. The Iceberg table/schema/rows are loaded separately by [`load_market_data.py`](../market-data-mcp/data/load_market_data.py), because Iceberg table management belongs to pyiceberg, not CloudFormation.
 - **`agentic-backtest-backend`** (`infra/backend_stack.py`) — the market-data **Lambda** (arm64 container image), **Cognito** (user pool + domain + machine-to-machine client for gateway auth), and the **AgentCore Gateway + Target** that exposes the Lambda as an MCP tool.
 
 ## Usage
