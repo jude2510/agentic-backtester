@@ -1,0 +1,41 @@
+{
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "results_summary": {
+            "runtimeId": "results_summary-nfF458BlWR",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/results_summary-nfF458BlWR",
+            "roleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-10cc733cf5"
+          },
+          "quant_agent": {
+            "runtimeId": "quant_agent-eYNAk3BW0d",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/quant_agent-eYNAk3BW0d",
+            "roleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-a6f76213c2"
+          },
+          "strategy_generator": {
+            "runtimeId": "strategy_generator-QGs4Yn35vR",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/strategy_generator-QGs4Yn35vR",
+            "roleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d"
+          }
+        },
+        "memories": {
+          "strategy_generator_mem": {
+            "memoryId": "strategy_generator_mem-S5w8VZGwAo",
+            "memoryArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:memory/strategy_generator_mem-S5w8VZGwAo"
+          },
+          "results_summary_mem": {
+            "memoryId": "results_summary_mem-IXHYGF9xb1",
+            "memoryArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:memory/results_summary_mem-IXHYGF9xb1"
+          },
+          "quant_agent_mem": {
+            "memoryId": "quant_agent_mem-kDK1FM7lnj",
+            "memoryArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:memory/quant_agent_mem-kDK1FM7lnj"
+          }
+        },
+        "stackName": "AgentCore-agenticbacktester-default",
+        "deployHash": "e0504da2fd2c8995"
+      }
+    }
+  }
+}

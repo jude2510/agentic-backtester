@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quant_agent"
+version = "0.1.0"
+description = "Quant Agent orchestrator (Strands/Claude Sonnet) — coordinates strategy generation, market data, backtest, and results summary"
+requires-python = ">=3.10"
+dependencies = [
+    "aws-opentelemetry-distro",
+    "bedrock-agentcore >= 1.9.1",
+    "botocore[crt] >= 1.35.0",
+    "strands-agents >= 1.15.0",
+    "python-dotenv >= 1.0.0",
+    "boto3 >= 1.35.0",
+    "httpx >= 0.24.0",
+    "requests >= 2.28.0",
+    "backtrader == 1.9.78.123",
+    "pandas >= 1.5.0",
+    "numpy >= 1.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+exclude = ["tools/market_data_mcp"]
+
+[tool.setuptools]
+py-modules = []

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "agenticbacktester",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "agenticbacktester"
+  },
+  "runtimes": [
+    {
+      "name": "strategy_generator",
+      "build": "CodeZip",
+      "entrypoint": "strategy_generator.py",
+      "codeLocation": "app/strategy_generator",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "instrumentation": {
+        "enableOtel": true
+      },
+      "protocol": "HTTP",
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d"
+    },
+    {
+      "name": "results_summary",
+      "build": "CodeZip",
+      "entrypoint": "results_summary.py",
+      "codeLocation": "app/results_summary",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "instrumentation": {
+        "enableOtel": true
+      },
+      "protocol": "HTTP",
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-10cc733cf5"
+    },
+    {
+      "name": "quant_agent",
+      "build": "CodeZip",
+      "entrypoint": "quant_agent.py",
+      "codeLocation": "app/quant_agent",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "instrumentation": {
+        "enableOtel": true
+      },
+      "protocol": "HTTP",
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-a6f76213c2",
+      "envVars": [
+        { "name": "QUANT_AGENT_MODEL_ID", "value": "us.anthropic.claude-sonnet-4-6" },
+        { "name": "AGENTCORE_GATEWAY_URL", "value": "https://agentic-backtest-gateway-vgehrqpmfa.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp" },
+        { "name": "COGNITO_DOMAIN", "value": "agentic-backtest-mcp" },
+        { "name": "COGNITO_CLIENT_ID", "value": "1jvbk18pbe7ofhjnehdcaqfjvd" },
+        { "name": "STRATEGY_GENERATOR_RUNTIME_ARN", "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/strategy_generator-QGs4Yn35vR" },
+        { "name": "BACKTEST_SUMMARY_RUNTIME_ARN", "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/results_summary-nfF458BlWR" }
+      ]
+    }
+  ],
+  "memories": [
+    {
+      "name": "strategy_generator_mem",
+      "eventExpiryDuration": 30,
+      "strategies": []
+    },
+    {
+      "name": "results_summary_mem",
+      "eventExpiryDuration": 30,
+      "strategies": []
+    },
+    {
+      "name": "quant_agent_mem",
+      "eventExpiryDuration": 30,
+      "strategies": []
+    }
+  ],
+  "knowledgeBases": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "harnesses": [],
+  "datasets": [],
+  "payments": []
+}
