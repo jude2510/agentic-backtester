@@ -1,23 +1,30 @@
-# AgentCore Project
+# Agentic Backtester — AgentCore Agents
 
-This project was created with the [AgentCore CLI](https://github.com/aws/agentcore-cli).
+The three agents behind the [Agentic Backtester](../../README.md), managed as a single [AgentCore CLI](https://github.com/aws/agentcore-cli) (`@aws/agentcore`) project. One CloudFormation stack provisions all three runtimes, their memories, and IAM.
 
-## Project Structure
+| Agent (`app/`) | Role | Model |
+| --- | --- | --- |
+| `quant_agent` | Orchestrator — coordinates the other two plus the market-data and backtest tools; holds chat memory | Claude Sonnet |
+| `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus |
+| `results_summary` | Writes the human-readable performance report | Amazon Nova |
+
+See the repo [DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md) for the end-to-end deploy flow.
+
+## Project structure
 
 ```
-my-project/
-├── AGENTS.md               # AI coding assistant context
+agenticbacktester/
+├── AGENTS.md               # AI-assistant context (schema, invariants) — CLI-managed
 ├── agentcore/
-│   ├── agentcore.json      # Project config (agents, memories, credentials, gateways, evaluators)
-│   ├── aws-targets.json    # Deployment targets (account + region)
-│   ├── .env.local          # Secrets — API keys (gitignored)
-│   ├── .llm-context/       # TypeScript type definitions for AI assistants
-│   │   ├── agentcore.ts    # AgentCoreProjectSpec types
-│   │   ├── aws-targets.ts  # Deployment target types
-│   │   └── mcp.ts          # Gateway and MCP tool types
-│   └── cdk/                # CDK infrastructure (@aws/agentcore-cdk)
-├── app/                    # Agent application code
-└── evaluators/             # Custom evaluator code (if any)
+│   ├── agentcore.json      # Project config: runtimes (+ envVars), memories
+│   ├── aws-targets.json    # Deployment target (account + region)
+│   ├── .env.local          # Secrets (gitignored) — the Cognito client secret
+│   ├── .llm-context/       # Type definitions for the JSON config
+│   └── cdk/                # Generated CDK (@aws/agentcore-cdk)
+└── app/                    # Agent source (one dir per agent, each with a pyproject.toml)
+    ├── quant_agent/
+    ├── strategy_generator/
+    └── results_summary/
 ```
 
 ## Getting Started
