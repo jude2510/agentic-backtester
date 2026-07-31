@@ -1,6 +1,6 @@
 # Agentic Backtester — AgentCore Agents
 
-The three agents behind the [Agentic Backtester](../../README.md), managed as a single [AgentCore CLI](https://github.com/aws/agentcore-cli) (`@aws/agentcore`) project. One CloudFormation stack provisions all three runtimes, their memories, and IAM.
+The three agents behind the [Agentic Backtester](../README.md), managed as a single [AgentCore CLI](https://github.com/aws/agentcore-cli) (`@aws/agentcore`) project. One CloudFormation stack provisions all three runtimes, their memories, and IAM.
 
 | Agent (`app/`) | Role | Model |
 | --- | --- | --- |
@@ -8,12 +8,12 @@ The three agents behind the [Agentic Backtester](../../README.md), managed as a 
 | `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus |
 | `results_summary` | Writes the human-readable performance report | Amazon Nova |
 
-See the repo [DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md) for the end-to-end deploy flow.
+See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) for the end-to-end deploy flow.
 
 ## Project structure
 
 ```
-agenticbacktester/
+agents/
 ├── AGENTS.md               # AI-assistant context (schema, invariants) — CLI-managed
 ├── agentcore/
 │   ├── agentcore.json      # Project config: runtimes (+ envVars), memories

@@ -91,10 +91,10 @@ jq '.body | fromjson | .metadata' out.json   # expect success:true, total_rows:5
 
 ## 3. Agents (AgentCore Runtime)
 
-All three agents — Strategy Generator, Result Summarizer, and the Quant Agent orchestrator — form a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project under [`agents/agenticbacktester/`](./agents/agenticbacktester). The CLI provisions every runtime, memory, and IAM role via one CloudFormation stack (`AgentCore-agenticbacktester-default`).
+All three agents — Strategy Generator, Result Summarizer, and the Quant Agent orchestrator — form a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project under [`agents/`](./agents). The CLI provisions every runtime, memory, and IAM role via one CloudFormation stack (`AgentCore-agenticbacktester-default`).
 
 - **Source** lives in `app/<agent>/`, each with a `pyproject.toml` build spec.
-- **Non-secret config** (model id, gateway URL, Cognito domain/client id, the sub-agent ARNs) is committed per-runtime under `envVars` in [`agentcore/agentcore.json`](./agents/agenticbacktester/agentcore/agentcore.json).
+- **Non-secret config** (model id, gateway URL, Cognito domain/client id, the sub-agent ARNs) is committed per-runtime under `envVars` in [`agentcore/agentcore.json`](./agents/agentcore/agentcore.json).
 - **Secrets** go in `agentcore/.env.local` (gitignored, injected at deploy). The only one required is the Cognito client secret.
 - **Memory ids** are injected automatically as `MEMORY_<NAME>_ID` — no manual wiring.
 
@@ -103,7 +103,7 @@ All three agents — Strategy Generator, Result Summarizer, and the Quant Agent 
 After the CDK stacks are up (section 2), update the `quant_agent` runtime's `envVars` in `agentcore/agentcore.json` to match your stack outputs — `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`), `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID` — then put the client secret in `.env.local`:
 
 ```bash
-cd agents/agenticbacktester
+cd agents
 echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" >> agentcore/.env.local
 ```
 
@@ -149,7 +149,7 @@ cd infra && source .venv/bin/activate
 cdk destroy agentic-backtest-backend agentic-backtest-data
 ```
 
-The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. The three agents are a single CloudFormation stack — remove them by running `agentcore destroy` from `agents/agenticbacktester/`, or with `aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default`.
+The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. The three agents are a single CloudFormation stack — remove them by running `agentcore destroy` from `agents/`, or with `aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default`.
 
 ---
 
