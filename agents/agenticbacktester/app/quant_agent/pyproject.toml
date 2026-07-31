@@ -23,7 +23,6 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-exclude = ["tools/market_data_mcp"]
 
 [tool.setuptools]
 py-modules = []
