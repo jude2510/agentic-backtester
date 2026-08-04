@@ -41,7 +41,6 @@ class Recommendations(BaseModel):
 class BacktestReport(BaseModel):
     """A structured quant review of a Backtrader backtest."""
     model_config = ConfigDict(populate_by_name=True)
-    backtest_result: dict = Field(alias="backtestResult", description="Key backtest metrics echoed back as key/value pairs")
     executive_summary: str = Field(alias="executiveSummary", description="2-3 sentence overview of the strategy's viability")
     detailed_analysis: str = Field(alias="detailedAnalysis", description="In-depth examination with specific numbers and interpretations")
     concerns_and_recommendations: Recommendations = Field(alias="concernsAndRecommendations")
@@ -61,7 +60,6 @@ When analyzing, consider:
 - Overfitting / data-quality red flags: Sharpe > 3, win rate > 70%, unrealistically smooth equity curves, very few trades (< 30), look-ahead or survivorship bias, ignored transaction costs
 
 Populate the report fields:
-- backtestResult: echo the key metrics you were given as key/value pairs
 - executiveSummary: a 2-3 sentence overview of the strategy's viability
 - detailedAnalysis: an in-depth examination citing specific numbers and interpretations
 - concernsAndRecommendations: highPriority (critical fixes), mediumPriority (optimizations), and considerTesting (experimental ideas)

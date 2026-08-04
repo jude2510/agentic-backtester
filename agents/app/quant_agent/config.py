@@ -35,6 +35,7 @@ _chat_agent = None  # Chat mode agent for analyzing historical backtests
 _region_name = None
 _generated_strategy_code = None
 _last_backtest_result = None  # Store last backtest result directly (trades, trade_summary)
+_results_summary_report = None  # Store the results_summary structured report (JSON string)
 _stored_market_data = {}
 _actor_id = "Quant"
 _strategy_generator_version = "unknown"  # Track strategy generator version

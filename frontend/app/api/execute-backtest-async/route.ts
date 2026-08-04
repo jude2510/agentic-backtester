@@ -129,6 +129,7 @@ async function processBacktest(jobId: string, strategyInput: any) {
     const tradeSummary = result.trade_summary || {};
     const backtestMetrics = result.backtest_metrics || null;
     const versions = result.versions || null;
+    const summaryReport = result.summary_report || null;
 
     console.log('========================================');
     console.log('[AgentCore] EXTRACTED TEXT:');
@@ -153,6 +154,7 @@ async function processBacktest(jobId: string, strategyInput: any) {
         trades,
         trade_summary: tradeSummary,
         backtest_metrics: backtestMetrics,
+        summary_report: summaryReport,
         versions
       }
     };

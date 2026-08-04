@@ -84,6 +84,10 @@ def create_results_summary(backtest_results: dict) -> str:
         print(f"⏱️ Results summary completed in {processing_time:.2f} seconds")
         print(f"got JSON result: {summary_text}")
 
+        # Stash the structured report so the entrypoint can return it as a
+        # dedicated field (the frontend renders from this, not parsed text).
+        config._results_summary_report = summary_text
+
         # Brief pause to ensure completion
         time.sleep(0.5)
         return summary_text

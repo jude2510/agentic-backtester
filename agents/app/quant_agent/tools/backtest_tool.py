@@ -69,6 +69,12 @@ def run_backtest(symbol: str, strategy_code: str, params: dict = None) -> dict:
     df['date'] = pd.to_datetime(df['date'])
     df.set_index('date', inplace=True)
 
+    # Backtrader feeds bars in DataFrame row order and requires ascending
+    # chronological order. The S3 Tables/Iceberg scan does not guarantee sorted
+    # rows, so sort explicitly — otherwise indicators (SMA/CrossOver) compute on
+    # out-of-order bars and no valid signals fire (0 trades).
+    df.sort_index(inplace=True)
+
     # Ensure numeric columns are properly typed for Backtrader
     numeric_columns = ['open', 'high', 'low', 'close', 'volume', 'adj_close']
     for col in numeric_columns:

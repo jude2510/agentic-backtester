@@ -106,6 +106,16 @@ function ResultsDisplayContent() {
             }
           }
 
+          // Prefer the results_summary structured report (typed output) for the
+          // analysis prose — robust vs. parsing it out of the agent's free text.
+          if (result.data.summary_report) {
+            const r = result.data.summary_report;
+            console.log('[Results] Using structured summary_report');
+            if (r.executiveSummary) parsedResult.executive_summary = r.executiveSummary;
+            if (r.detailedAnalysis) parsedResult.detailed_analysis = r.detailedAnalysis;
+            if (r.concernsAndRecommendations) parsedResult.concerns_and_recommendations = r.concernsAndRecommendations;
+          }
+
           setResults(parsedResult);
           setLoading(false);
           return;

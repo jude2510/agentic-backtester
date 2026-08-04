@@ -7,6 +7,7 @@ It coordinates strategy generation, market data, backtesting, and results summar
 """
 
 import os
+import json
 from bedrock_agentcore import BedrockAgentCoreApp
 import config
 from tools import (
@@ -138,7 +139,6 @@ def invoke(payload, context=None):
 
         # Parse payload if it's a string
         if isinstance(payload, str):
-            import json
             payload = json.loads(payload)
 
         # Check if this is a chat mode request
@@ -157,6 +157,7 @@ def invoke(payload, context=None):
         # Reset before each run
         config._generated_strategy_code = None
         config._last_backtest_result = None
+        config._results_summary_report = None
 
         result = config._quant_agent.run_sync(payload.get("prompt"))
 
@@ -187,8 +188,19 @@ def invoke(payload, context=None):
             }
             print(f"backtest_metrics: {backtest_metrics}")
 
+        # The results_summary agent returns a schema-validated report (typed
+        # output_type). Pass it through as structured data so the frontend
+        # renders the analysis directly instead of parsing it out of free text.
+        summary_report = None
+        if config._results_summary_report:
+            try:
+                summary_report = json.loads(config._results_summary_report)
+            except Exception:
+                summary_report = None
+
         return {
             "result": _as_message(result.output),
+            "summary_report": summary_report,
             "strategy_code": config._generated_strategy_code,
             "trades": trades,
             "trade_summary": trade_summary,
