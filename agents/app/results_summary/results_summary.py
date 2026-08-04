@@ -2,11 +2,14 @@
 Results Summary Agent - Analyzes and summarizes backtest results.
 
 Built with Pydantic AI (agent + Bedrock model) hosted on Amazon Bedrock AgentCore.
+Uses a typed `output_type` so the model returns a schema-validated report object
+rather than free-form text the caller has to parse.
 """
 
 import os
 from typing import Dict, Any
 from datetime import datetime
+from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
@@ -23,65 +26,54 @@ VERSION = os.getenv('AGENT_VERSION', datetime.now().strftime('%Y%m%d_%H%M%S'))
 app = BedrockAgentCoreApp()
 
 
+# ---------------------------------------------------------------------------
+# Typed output schema. Field aliases map snake_case Python fields to the
+# camelCase JSON keys the downstream tool + frontend already consume, so the
+# response contract ({"analysis": "<json string>"}) is unchanged.
+# ---------------------------------------------------------------------------
+class Recommendations(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    high_priority: list[str] = Field(alias="highPriority")
+    medium_priority: list[str] = Field(alias="mediumPriority")
+    consider_testing: list[str] = Field(alias="considerTesting")
+
+
+class BacktestReport(BaseModel):
+    """A structured quant review of a Backtrader backtest."""
+    model_config = ConfigDict(populate_by_name=True)
+    backtest_result: dict = Field(alias="backtestResult", description="Key backtest metrics echoed back as key/value pairs")
+    executive_summary: str = Field(alias="executiveSummary", description="2-3 sentence overview of the strategy's viability")
+    detailed_analysis: str = Field(alias="detailedAnalysis", description="In-depth examination with specific numbers and interpretations")
+    concerns_and_recommendations: Recommendations = Field(alias="concernsAndRecommendations")
+
+
 class ResultsSummaryAgent:
     """Agent that analyzes backtest results and provides summaries"""
 
     def __init__(self):
         instructions = """
-         You are an expert quantitative analyst with 20+ years of experience in algorithmic trading, portfolio management, and strategy optimization. Your role is to review Backtrader backtesting results and provide professional, actionable advice to improve trading strategies.
+You are an expert quantitative analyst with 20+ years of experience in algorithmic trading, portfolio management, and strategy optimization. Review the Backtrader backtest results and produce a professional, actionable assessment.
 
-When Analyzing Backtrader Results, You Will:
+When analyzing, consider:
+- Total return and risk-adjusted returns (Sharpe, Sortino)
+- Maximum drawdown, drawdown duration, and recovery periods
+- Consistency across market regimes and sample-size adequacy
+- Overfitting / data-quality red flags: Sharpe > 3, win rate > 70%, unrealistically smooth equity curves, very few trades (< 30), look-ahead or survivorship bias, ignored transaction costs
 
-- Evaluate total return and risk-adjusted returns (Sharpe, Sortino, etc)
-- Assess consistency across different market regimes
-- Identify periods of outperformance and underperformance
-- Compare against relevant benchmarks
-- Analyze maximum drawdown, drawdown duration, and recovery periods
-- Evaluate volatility patterns and tail risk
-- Check for overfitting indicators (too many parameters, perfect equity curve)
-- Evaluate sample size adequacy
-- Look for survivorship bias, look-ahead bias, or data snooping
-- Assess statistical significance of results
-
-Red Flags to Always Check:
-- Sharpe ratio >3 (potential overfitting)
-- Win rate >70% (suspicious for most strategies)
-- Smooth equity curves without realistic drawdowns
-- Very few trades (<30 over entire backtest)
-- Returns that seem "too good to be true"
-- Strategies that only work in specific years
-- Ignoring transaction costs or using unrealistic assumptions
-
-
-Analyze the trading strategy results provided and output your analysis in the following JSON format:
-
-{
-  "backtestResult": {"repeat all the results here in key pair format"},
-  "executiveSummary": "A 2-3 sentence overview of the strategy's viability",
-  "detailedAnalysis": "In-depth examination of metrics with specific numbers and interpretations",
-  "concernsAndRecommendations": {
-    "highPriority": [
-      "Critical fix 1",
-      "Critical fix 2"
-    ],
-    "mediumPriority": [
-      "Optimization 1",
-      "Optimization 2"
-    ],
-    "considerTesting": [
-      "Experimental idea 1",
-      "Experimental idea 2"
-    ]
-  }
-}
+Populate the report fields:
+- backtestResult: echo the key metrics you were given as key/value pairs
+- executiveSummary: a 2-3 sentence overview of the strategy's viability
+- detailedAnalysis: an in-depth examination citing specific numbers and interpretations
+- concernsAndRecommendations: highPriority (critical fixes), mediumPriority (optimizations), and considerTesting (experimental ideas)
 
 Deliver your analysis with the insight of a senior quant reviewing a junior trader's work.
-Ensure all output is in valid JSON format with executiveSummary, detailedAnalysis and concernsAndRecommendations.
-         """
+"""
 
-        # Get Results Summary specific configuration from environment
+        # Get Results Summary specific configuration from environment.
+        # Default to a Claude model: Pydantic AI enforces structured output via
+        # tool-calling, which Claude handles reliably (Nova-Lite can be flaky).
         aws_region = os.getenv('AWS_REGION', 'us-east-1')
-        model_id = os.getenv('RESULTS_SUMMARY_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+        model_id = os.getenv('RESULTS_SUMMARY_MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
         temperature = float(os.getenv('RESULTS_SUMMARY_TEMPERATURE', '0.3'))
 
         print("🔧 Results Summary Configuration:")
@@ -90,16 +82,17 @@ Ensure all output is in valid JSON format with executiveSummary, detailedAnalysi
         print(f"   Region: {aws_region}")
         print(f"   Temperature: {temperature}")
 
-        # Create the Pydantic AI agent backed by a Bedrock model
+        # Create the Pydantic AI agent with a typed output schema
         model = BedrockConverseModel(model_id, provider=BedrockProvider(region_name=aws_region))
         self.agent = Agent(
             model,
             system_prompt=instructions,
+            output_type=BacktestReport,
             model_settings={'temperature': temperature},
         )
 
     def analyze_results(self, backtest_results: Dict[str, Any]) -> str:
-        """Analyze backtest results and generate summary using AI"""
+        """Analyze backtest results and return the report as a JSON string."""
         if 'error' in backtest_results:
             return f"❌ **Backtest Error**: {backtest_results['error']}"
 
@@ -129,10 +122,12 @@ Performance Metrics:
 
 """
 
-            # Use AI to analyze the results
+            # Use AI to analyze the results — output is a validated BacktestReport
             print("🤖 Invoking AI analysis for backtest results...")
             print(prompt)
-            analysis = self.agent.run_sync(prompt).output
+            report = self.agent.run_sync(prompt).output
+            # Serialize back to the camelCase JSON string the caller expects
+            analysis = report.model_dump_json(by_alias=True)
             print(f"output: {analysis}")
 
             return analysis
