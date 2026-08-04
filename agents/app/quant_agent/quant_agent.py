@@ -8,6 +8,8 @@ It coordinates strategy generation, market data, backtesting, and results summar
 
 import os
 import json
+from typing import Literal
+from pydantic import BaseModel, Field
 from bedrock_agentcore import BedrockAgentCoreApp
 import config
 from tools import (
@@ -26,6 +28,19 @@ def _as_message(text: str) -> dict:
     """Shape a plain-text agent output as the message object the frontend expects
     (`result.content[0].text`), preserving the response contract across the UI routes."""
     return {"role": "assistant", "content": [{"text": text}]}
+
+
+class BacktestRun(BaseModel):
+    """Typed final output of the quant orchestrator (backtest mode).
+
+    The numeric metrics/trades reach the UI via dedicated fields set by the tools
+    (backtest_metrics, trades, summary_report); this schema captures the agent's
+    own final response — the human-readable writeup plus a one-word verdict.
+    """
+    narrative: str = Field(description="Complete human-readable markdown performance report for the user")
+    verdict: Literal["strong", "promising", "weak", "broken"] = Field(
+        description="One-word overall assessment of the strategy's backtested performance"
+    )
 
 
 def _ensure_initialized():
@@ -79,16 +94,21 @@ STEP 3: ALWAYS call run_backtest
 STEP 4: ALWAYS call create_results_summary
 - Use the backtest results from Step 3
 - Call create_results_summary to format the final results
-- Output the JSON from create_results_summary direct to users
+
+FINAL OUTPUT: After all 4 tools have run, return your answer as the structured
+BacktestRun output:
+- narrative: a complete, human-readable markdown performance report built from
+  create_results_summary's output
+- verdict: a one-word overall assessment (strong | promising | weak | broken)
 
 CRITICAL RULES:
 - Execute ALL 4 steps in sequence for EVERY request
 - WAIT for each tool to complete before calling the next tool
 - Do NOT call multiple tools simultaneously
 - Do NOT ask for clarification - proceed with defaults AMZN 1-year if information is missing
-- Do NOT explain what you're going to do - just DO all 4 steps
-- Complete the entire workflow automatically and synchronously
-- Output the JSON output directly from create_results_summary to users """,
+- Do NOT explain what you're going to do - just DO all 4 steps, then return the BacktestRun
+- Complete the entire workflow automatically and synchronously """,
+        output_type=BacktestRun,
         tools=[
             fetch_market_data_via_gateway,
             generate_trading_strategy,
@@ -199,7 +219,8 @@ def invoke(payload, context=None):
                 summary_report = None
 
         return {
-            "result": _as_message(result.output),
+            "result": _as_message(result.output.narrative),
+            "verdict": result.output.verdict,
             "summary_report": summary_report,
             "strategy_code": config._generated_strategy_code,
             "trades": trades,
