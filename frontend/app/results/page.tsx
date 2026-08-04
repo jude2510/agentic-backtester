@@ -484,7 +484,7 @@ function ResultsDisplayContent() {
             </div>
             <div>
               <h3 className="text-2xl font-bold text-white">AI Agent Analysis</h3>
-              <p className="text-gray-400">Powered by Strands and AgentCore</p>
+              <p className="text-gray-400">Powered by Pydantic AI and AgentCore</p>
             </div>
           </div>
 

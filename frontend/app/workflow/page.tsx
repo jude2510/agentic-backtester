@@ -124,7 +124,7 @@ function WorkflowProgressContent() {
           transition={{ duration: 0.8 }}
         >
           <h1 className="text-5xl font-bold bg-gradient-to-r from-accent-blue to-accent-purple bg-clip-text text-transparent mb-4">
-            🏗️ Multi-Agent Architecture by Strands and AgentCore
+            🏗️ Multi-Agent Architecture by Pydantic AI and AgentCore
           </h1>
           <p className="text-xl text-gray-300">
             Explore the intelligent orchestrator architecture powering your trading strategy analysis
@@ -248,7 +248,7 @@ function WorkflowProgressContent() {
 
                 </motion.g>
 
-                {/* Backtest Tool (Strands) */}
+                {/* Backtest Tool (Pydantic AI) */}
                 <motion.g
                   initial={{ opacity: 0, x: 50 }}
                   animate={{ opacity: 1, x: 0 }}

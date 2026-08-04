@@ -12,7 +12,6 @@ import urllib.parse
 from datetime import datetime
 from typing import Dict, Any
 import httpx
-from strands import tool
 import config
 
 
@@ -265,7 +264,6 @@ def call_gateway_market_data_with_cognito(symbol: str, start_date: str = None, e
         raise
 
 
-@tool
 def fetch_market_data_via_gateway(symbol: str, start_date: str = None, end_date: str = None, limit: int = 252) -> Dict[str, Any]:
     """
     Fetch market data via AgentCore Gateway MCP with Cognito authentication.

@@ -3,7 +3,7 @@
 This guide deploys the Agentic Backtester end to end:
 
 1. **Backend infrastructure** — defined as Infrastructure-as-Code with **AWS CDK (Python)**: two stacks under the `agentic-backtest` prefix that provision the S3 Tables market-data store, the market-data Lambda, Cognito (machine-to-machine auth), and the AgentCore Gateway + Target (MCP). This replaces the original sample's imperative shell scripts.
-2. **Agents** — three Strands agents deployed to AgentCore Runtime as a single `@aws/agentcore` CLI project.
+2. **Agents** — three Pydantic AI agents deployed to AgentCore Runtime as a single `@aws/agentcore` CLI project.
 3. **Frontend** — a Next.js app run locally against the orchestrator.
 
 ## Table of Contents

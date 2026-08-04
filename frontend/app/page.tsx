@@ -117,7 +117,7 @@ export default function StrategyBuilder() {
             🎯 Trading Strategy Backtesting
           </h1>
           <p className="text-xl text-gray-300 max-w-3xl">
-            Multi-agent trading strategy backtesting with Strands agent and Amazon Bedrock AgentCore
+            Multi-agent trading strategy backtesting with Pydantic AI and Amazon Bedrock AgentCore
           </p>
           <div className="mt-4">
             <a

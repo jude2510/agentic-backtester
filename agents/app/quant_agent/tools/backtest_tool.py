@@ -5,7 +5,6 @@ Runs trading strategy backtests using the BacktestTool class
 
 import time
 import pandas as pd
-from strands import tool
 import config
 from tools.backtest import BacktestTool
 
@@ -14,7 +13,6 @@ from tools.backtest import BacktestTool
 backtest_tool = BacktestTool()
 
 
-@tool
 def run_backtest(symbol: str, strategy_code: str, params: dict = None) -> dict:
     """
     Execute trading strategy backtest using historical market data.

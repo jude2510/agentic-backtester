@@ -15,13 +15,13 @@ Four specialized agents, orchestrated by a Quant Agent, transform a trading idea
 3. **Backtest tool** — runs the generated strategy through Backtrader and returns performance metrics
 4. **Results Summarizer** — turns raw metrics into a readable performance report (Amazon Nova, on AgentCore Runtime)
 
-The **Quant Agent** (Claude Sonnet, on AgentCore Runtime) orchestrates all four via the Strands Agent SDK, with AgentCore Memory for chat continuity. A Next.js frontend provides the UI.
+The **Quant Agent** (Claude Sonnet, on AgentCore Runtime) orchestrates all four via the Pydantic AI agent framework, with AgentCore Memory for chat continuity. A Next.js frontend provides the UI.
 
 ![Architecture](./docs/architecture.png)
 
 ## Tech stack
 
-- **Strands Agent SDK** — agent framework; `@tool` decorators expose Python functions as agent tools
+- **Pydantic AI** — agent framework; plain Python functions become tools, with schemas inferred from their type hints and docstrings
 - **Amazon Bedrock AgentCore** — Runtime (agent hosting), Gateway (MCP tools), Identity/Cognito (auth), Memory (chat state), Observability (traces/logs)
 - **Amazon Bedrock models** — Claude Opus / Sonnet, Amazon Nova
 - **S3 Tables (Apache Iceberg)** + **Lambda** — market data store and access

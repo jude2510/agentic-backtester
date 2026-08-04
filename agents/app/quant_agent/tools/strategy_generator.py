@@ -7,11 +7,9 @@ import os
 import json
 import uuid
 import time
-from strands import tool
 import config
 
 
-@tool
 def generate_trading_strategy(query: str) -> str:
     """
     Generate executable trading strategy code from natural language descriptions.

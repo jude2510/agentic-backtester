@@ -1,7 +1,9 @@
 """
 AgentCore Interactive Backtesting Agent
-Demonstrates "Agent as Tool" patterns with AgentCore Gateway integration
-Single agent with Strands tools for strategy generation, backtesting, and results
+Demonstrates "Agent as Tool" patterns with AgentCore Gateway integration.
+
+Orchestrator built with Pydantic AI (agent + tools) hosted on Amazon Bedrock AgentCore.
+It coordinates strategy generation, market data, backtesting, and results summary.
 """
 
 import os
@@ -19,6 +21,12 @@ from tools import (
 app = BedrockAgentCoreApp()
 
 
+def _as_message(text: str) -> dict:
+    """Shape a plain-text agent output as the message object the frontend expects
+    (`result.content[0].text`), preserving the response contract across the UI routes."""
+    return {"role": "assistant", "content": [{"text": text}]}
+
+
 def _ensure_initialized():
     """
     Lazy initialization of heavy resources.
@@ -32,20 +40,21 @@ def _ensure_initialized():
     # Initialize AWS clients and memory
     config.initialize_clients()
 
-    # Create the Strands agent with BedrockModel
-    from strands import Agent
-    from strands.models.bedrock import BedrockModel
+    # Create the Pydantic AI agent backed by a Bedrock model
+    from pydantic_ai import Agent
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
     _quant_model_id = os.getenv('QUANT_AGENT_MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
     print(f"   Quant Agent Model ID: {_quant_model_id}")
 
-    _quant_model = BedrockModel(
-        model_id=_quant_model_id,
-        region_name=config._region_name,
+    _quant_model = BedrockConverseModel(
+        _quant_model_id,
+        provider=BedrockProvider(region_name=config._region_name),
     )
 
     config._quant_agent = Agent(
-        model=_quant_model,
+        _quant_model,
         system_prompt="""You are the Quant Backtesting Agent. When you receive ANY request, you MUST automatically execute ALL 4 steps in this EXACT sequence:
 
 STEP 1: ALWAYS call generate_trading_strategy first
@@ -90,7 +99,7 @@ CRITICAL RULES:
 
     # Create chat mode agent for analyzing historical backtests
     config._chat_agent = Agent(
-        model=_quant_model,
+        _quant_model,
         system_prompt="""You are the Quant Research Assistant. You help quants analyze their historical backtesting results and suggest strategy improvements.
 
 You have access to the get_backtest_history tool which retrieves past backtest records including:
@@ -124,7 +133,7 @@ def invoke(payload, context=None):
         # Lazy initialization on first call
         _ensure_initialized()
 
-        print(f"🚀 AgentCore Runtime: Backtesting Agent processing request")
+        print("🚀 AgentCore Runtime: Backtesting Agent processing request")
         print(f"📥 Payload received: {payload}")
 
         # Parse payload if it's a string
@@ -137,9 +146,9 @@ def invoke(payload, context=None):
 
         if mode == "chat":
             print("💬 Chat mode: Using chat agent for historical analysis")
-            result = config._chat_agent(payload.get("prompt"))
+            result = config._chat_agent.run_sync(payload.get("prompt"))
             return {
-                "result": result.message
+                "result": _as_message(result.output)
             }
 
         # Default: backtest execution mode
@@ -149,7 +158,7 @@ def invoke(payload, context=None):
         config._generated_strategy_code = None
         config._last_backtest_result = None
 
-        result = config._quant_agent(payload.get("prompt"))
+        result = config._quant_agent.run_sync(payload.get("prompt"))
 
         # Use _last_backtest_result directly (set by run_backtest tool)
         # This is more reliable than reading from Memory which may return stale data
@@ -160,7 +169,7 @@ def invoke(payload, context=None):
             trade_summary = config._last_backtest_result.get('trade_summary', {})
             print(f"📊 invoke() returning {len(trades)} trades from _last_backtest_result")
         else:
-            print(f"⚠️ invoke() _last_backtest_result is None, falling back to Memory")
+            print("⚠️ invoke() _last_backtest_result is None, falling back to Memory")
             latest = config.get_backtest_results_from_memory()
             if latest:
                 trades = latest.get('trades', [])
@@ -179,7 +188,7 @@ def invoke(payload, context=None):
             print(f"backtest_metrics: {backtest_metrics}")
 
         return {
-            "result": result.message,
+            "result": _as_message(result.output),
             "strategy_code": config._generated_strategy_code,
             "trades": trades,
             "trade_summary": trade_summary,
@@ -199,7 +208,7 @@ def invoke(payload, context=None):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Strands Multi-Agent Quant Backtesting Agent on AgentCore")
+    print("🚀 Starting Pydantic AI Multi-Agent Quant Backtesting Agent on AgentCore")
     print(f"   App type: {type(app)}")
     print(f"   App methods: {[m for m in dir(app) if not m.startswith('_')]}")
 

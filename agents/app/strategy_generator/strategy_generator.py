@@ -1,14 +1,17 @@
 """
 Strategy Generator Agent - Converts JSON strategy config to executable Backtrader code
-With AgentCore Memory integration for cross-session learning
+With AgentCore Memory integration for cross-session learning.
+
+Built with Pydantic AI (agent + Bedrock model) hosted on Amazon Bedrock AgentCore.
 """
 
 import json
 import os
 from typing import Dict, Any, Union
 from datetime import datetime
-from strands import Agent
-from strands.models import BedrockModel
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
 from bedrock_agentcore import BedrockAgentCoreApp
 from bedrock_agentcore.memory import MemoryClient
 from dotenv import load_dotenv
@@ -73,9 +76,9 @@ def get_past_strategies(symbol: str = None) -> list:
         return []
 
 
-class StrategyGeneratorAgent():
+class StrategyGeneratorAgent:
     """Agent that generates Backtrader strategy code from JSON configuration"""
-    
+
     def __init__(self):
         instructions = """You are a trading strategy code generator. Convert JSON strategy configurations into executable Backtrader Python code.
 
@@ -92,28 +95,20 @@ If past strategies are provided as context, learn from them:
 - Avoid patterns that previously caused errors
 - Reuse successful indicator combinations
 - Improve on previous implementations"""
-        
+
         # Get Strategy Generator specific configuration from environment
         aws_region = os.getenv('AWS_REGION', 'us-east-1')
         model_id = os.getenv('STRATEGY_GENERATOR_MODEL_ID', 'us.anthropic.claude-opus-4-7')
 
-        print(f"🔧 Strategy Generator Configuration:")
+        print("🔧 Strategy Generator Configuration:")
         print(f"   Version: {VERSION}")
         print(f"   Model ID: {model_id}")
         print(f"   Region: {aws_region}")
 
-        # Create dedicated model for Strategy Generator
-        strategy_model = BedrockModel(
-            model_id=model_id,
-            region_name=aws_region,
-        )
+        # Create the Pydantic AI agent backed by a Bedrock model
+        model = BedrockConverseModel(model_id, provider=BedrockProvider(region_name=aws_region))
+        self.agent = Agent(model, system_prompt=instructions)
 
-        self.agent = Agent(
-            name="StrategyGenerator",
-            model=strategy_model,
-            system_prompt=instructions
-        )
-        
     def process(self, input_data: Union[str, Dict]) -> str:
         """Convert query and market data to Backtrader code"""
         if isinstance(input_data, str):
@@ -130,20 +125,19 @@ If past strategies are provided as context, learn from them:
             prompt += context
 
         # Generate strategy
-        result = self.agent(prompt)
+        result = self.agent.run_sync(prompt).output
 
         # Save to memory
-        result_str = str(result) if result else ""
-        save_to_memory(strategy_config, result_str)
+        save_to_memory(strategy_config, result or "")
 
         return result
-    
+
     def _create_strategy_prompt(self, config: Dict[str, Any]) -> str:
         """Create detailed prompt for strategy generation """
-        
+
         database_config = config.get('database', {})
         backtest_window = config.get('backtest_window', '1Y')
-        
+
         return f"""
 Generate a complete Backtrader strategy class from this JSON configuration:
 
@@ -174,11 +168,11 @@ class RSIStrategy(bt.Strategy):
         ('stop_loss', 5.0),  # 5% stop loss
         ('take_profit', 10.0),  # 10% take profit
     )
-    
+
     def __init__(self):
         self.rsi = btind.RSI(self.data.close, period=14)
         self.buy_price = None
-        
+
     def next(self):
         if not self.position:
             if self.rsi < 30:  # Buy when RSI < 30
@@ -226,14 +220,14 @@ def _ensure_initialized():
     # Initialize memory client
     aws_region = os.getenv('AWS_REGION', 'us-east-1')
     _memory_client = MemoryClient(region_name=aws_region)
-    _memory_id = os.getenv('STRATEGY_GENERATOR_MEMORY_ID')
+    _memory_id = os.getenv('STRATEGY_GENERATOR_MEMORY_ID') or os.getenv('MEMORY_STRATEGY_GENERATOR_MEM_ID')
     _session_id = f"strategy_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     if _memory_id:
         print(f"🧠 Memory enabled: {_memory_id}")
         print(f"🔑 Session ID: {_session_id}")
     else:
-        print("⚠️ STRATEGY_GENERATOR_MEMORY_ID not set — memory disabled")
+        print("⚠️ STRATEGY_GENERATOR memory id not set — memory disabled")
 
     _agent = StrategyGeneratorAgent()
     _initialized = True

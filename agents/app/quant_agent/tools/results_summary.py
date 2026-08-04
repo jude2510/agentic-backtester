@@ -7,11 +7,9 @@ import os
 import json
 import uuid
 import time
-from strands import tool
 import config
 
 
-@tool
 def create_results_summary(backtest_results: dict) -> str:
     """
     Analyze backtest performance and generate comprehensive trading strategy report.

@@ -4,11 +4,9 @@ Retrieves historical backtest results from AgentCore Memory
 """
 
 import json
-from strands import tool
 import config
 
 
-@tool
 def get_backtest_history(symbol: str = None, limit: int = 10) -> dict:
     """
     Retrieve historical backtest results from AgentCore Memory.
