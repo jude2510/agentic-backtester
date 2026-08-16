@@ -7,7 +7,7 @@ import GlassCard from '@/components/ui/GlassCard';
 import GlassInput from '@/components/ui/GlassInput';
 import GlassSelect from '@/components/ui/GlassSelect';
 import AnimatedButton from '@/components/ui/AnimatedButton';
-import { AVAILABLE_STOCKS, ValidationResult } from '@/types/strategy';
+import { AVAILABLE_STOCKS, SYMBOL_COVERAGE, ValidationResult, WINDOW_ORDER, windowsFor } from '@/types/strategy';
 import { FRONTEND_VERSION } from '@/lib/version';
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -30,29 +30,42 @@ export default function StrategyBuilder() {
     errors: []
   });
 
+  // Every listed symbol is loaded in the market-data table, so none are disabled.
   const stockOptions = AVAILABLE_STOCKS.map(stock => ({
     value: stock.symbol,
-    label: `${stock.symbol} - ${stock.name}`,
-    disabled: stock.symbol !== 'AMZN' // Only AMZN has data available
+    label: `${stock.symbol} - ${stock.name}`
   }));
 
-  const windowOptions = [
-    { value: '1M', label: '1 Month' },
-    { value: '3M', label: '3 Months' },
-    { value: '6M', label: '6 Months' },
-    { value: '1Y', label: '1 Year' },
-    { value: '2Y', label: '2 Years' },
-    { value: '5Y', label: '5 Years' },
-    { value: '10Y', label: '10 Years' },
-    { value: '20Y', label: '20 Years' }
-  ];
+  const WINDOW_LABELS: Record<string, string> = {
+    '1M': '1 Month', '3M': '3 Months', '6M': '6 Months', '1Y': '1 Year',
+    '2Y': '2 Years', '5Y': '5 Years', '10Y': '10 Years', '20Y': '20 Years'
+  };
+
+  // Offer only windows the selected symbol has data for. AMZN reaches back 25
+  // years; the others start 2021-08-17, so anything beyond 5Y would quietly
+  // backtest a shorter period than the label promises.
+  const windowOptions = windowsFor(formData.stock_symbol).map(w => ({
+    value: w,
+    label: WINDOW_LABELS[w]
+  }));
+
+  const coverageStart = SYMBOL_COVERAGE[formData.stock_symbol]?.start;
 
   const handleInputChange = (field: keyof typeof formData, value: string | number) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-    validateForm({ ...formData, [field]: value });
+    const next = { ...formData, [field]: value };
+
+    // Switching to a shorter-history symbol can strand the current window
+    // (e.g. AMZN 20Y -> NVDA). Clamp to the longest window the new symbol
+    // supports rather than submitting a request it cannot satisfy.
+    if (field === 'stock_symbol') {
+      const allowed = windowsFor(String(value));
+      if (!allowed.includes(next.backtest_window)) {
+        next.backtest_window = allowed[allowed.length - 1];
+      }
+    }
+
+    setFormData(next);
+    validateForm(next);
   };
 
   const validateForm = (data: typeof formData = formData): ValidationResult => {
@@ -148,12 +161,21 @@ export default function StrategyBuilder() {
                     onChange={(value) => handleInputChange('stock_symbol', value)}
                   />
 
-                  <GlassSelect
-                    label="📅 Backtest Window"
-                    options={windowOptions}
-                    value={formData.backtest_window}
-                    onChange={(value) => handleInputChange('backtest_window', value)}
-                  />
+                  <div>
+                    <GlassSelect
+                      label="📅 Backtest Window"
+                      options={windowOptions}
+                      value={formData.backtest_window}
+                      onChange={(value) => handleInputChange('backtest_window', value)}
+                    />
+                    {coverageStart && (
+                      <p className="mt-2 text-xs text-white/50">
+                        Data available from {coverageStart}
+                        {windowOptions.length < WINDOW_ORDER.length &&
+                          ` — windows beyond ${windowOptions[windowOptions.length - 1].label} aren't offered for ${formData.stock_symbol}`}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Row 2: Max Positions & Stop Loss */}

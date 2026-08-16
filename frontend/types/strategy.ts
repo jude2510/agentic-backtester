@@ -98,16 +98,42 @@ export interface StockOption {
   name: string;
 }
 
+// Only symbols actually loaded in the market-data table. Keep in sync with
+// market-data-pipeline/symbols.json — listing a symbol here that hasn't been
+// ingested produces an empty backtest rather than an error.
 export const AVAILABLE_STOCKS: StockOption[] = [
-  { symbol: 'AAPL', name: 'Apple Inc.' },
-  { symbol: 'MSFT', name: 'Microsoft Corporation' },
-  { symbol: 'GOOGL', name: 'Alphabet Inc.' },
-  { symbol: 'TSLA', name: 'Tesla, Inc.' },
   { symbol: 'AMZN', name: 'Amazon.com Inc.' },
   { symbol: 'NVDA', name: 'NVIDIA Corporation' },
-  { symbol: 'META', name: 'Meta Platforms Inc.' },
-  { symbol: 'NFLX', name: 'Netflix Inc.' }
+  { symbol: 'MSFT', name: 'Microsoft Corporation' },
+  { symbol: 'TSLA', name: 'Tesla, Inc.' },
+  { symbol: 'SPY', name: 'SPDR S&P 500 ETF' }
 ];
+
+/**
+ * Longest backtest window each symbol can actually support.
+ *
+ * Coverage is deliberately asymmetric: AMZN carries 25 years from the original
+ * CSV load, while the rest begin at the data provider's 5-year plan limit
+ * (2021-08-17). Offering a longer window than a symbol can back would silently
+ * return a shorter series — the backtest would run, look successful, and cover
+ * a different period than the UI claims.
+ */
+export const WINDOW_ORDER = ['1M', '3M', '6M', '1Y', '2Y', '5Y', '10Y', '20Y'] as const;
+
+export const SYMBOL_COVERAGE: Record<string, { start: string; maxWindow: string }> = {
+  AMZN: { start: '2000-01-03', maxWindow: '20Y' },
+  NVDA: { start: '2021-08-17', maxWindow: '5Y' },
+  MSFT: { start: '2021-08-17', maxWindow: '5Y' },
+  TSLA: { start: '2021-08-17', maxWindow: '5Y' },
+  SPY: { start: '2021-08-17', maxWindow: '5Y' }
+};
+
+/** Windows valid for `symbol`, longest-supported first removed beyond coverage. */
+export function windowsFor(symbol: string): string[] {
+  const max = SYMBOL_COVERAGE[symbol]?.maxWindow ?? '5Y';
+  const maxIdx = WINDOW_ORDER.indexOf(max as typeof WINDOW_ORDER[number]);
+  return WINDOW_ORDER.slice(0, maxIdx + 1);
+}
 
 export interface ValidationResult {
   isValid: boolean;
