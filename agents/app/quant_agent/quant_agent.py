@@ -8,6 +8,7 @@ It coordinates strategy generation, market data, backtesting, and results summar
 
 import os
 import json
+import datetime as dt
 from typing import Literal
 from pydantic import BaseModel, Field
 from bedrock_agentcore import BedrockAgentCoreApp
@@ -28,6 +29,38 @@ def _as_message(text: str) -> dict:
     """Shape a plain-text agent output as the message object the frontend expects
     (`result.content[0].text`), preserving the response contract across the UI routes."""
     return {"role": "assistant", "content": [{"text": text}]}
+
+
+# (window token, calendar days back, approximate trading days)
+_WINDOWS = (
+    ("1M", 30, 21), ("3M", 91, 63), ("6M", 182, 126), ("1Y", 365, 252),
+    ("2Y", 730, 504), ("5Y", 1825, 1260), ("10Y", 3652, 2520), ("20Y", 7305, 5040),
+)
+
+
+def _date_reference() -> str:
+    """Build a lookup table of resolved date ranges for every backtest window.
+
+    The model has no clock: it cannot know the current date and will otherwise
+    anchor on its training cutoff, silently backtesting a window that can be a
+    year or more stale. Date arithmetic is deterministic work, so it is done
+    here and handed over as a lookup rather than asked of the LLM.
+
+    Computed per invocation, not at init — the runtime container is reused
+    across calls, so a date resolved once at startup would go stale.
+    """
+    today = dt.date.today()
+    rows = "\n".join(
+        f"  {w}: start_date={(today - dt.timedelta(days=days)).isoformat()}, "
+        f"end_date={today.isoformat()}, limit={limit}"
+        for w, days, limit in _WINDOWS
+    )
+    return (
+        f"DATE REFERENCE — today is {today.isoformat()}.\n"
+        f"Use these EXACT values for fetch_market_data_via_gateway. Match the\n"
+        f"strategy's backtest_window field to a row and copy the values verbatim.\n"
+        f"Do NOT compute dates yourself.\n{rows}\n"
+    )
 
 
 class BacktestRun(BaseModel):
@@ -80,10 +113,11 @@ STEP 1: ALWAYS call generate_trading_strategy first
 
 STEP 2: ALWAYS call fetch_market_data_via_gateway
 - Use the symbol from the strategy (default to AMZN if not specified)
-- IMPORTANT: Parse the backtest_window field (e.g. "10Y", "5Y", "1Y", "6M", "3M", "1M") and convert it to start_date and end_date:
-  - end_date = today's date in YYYY-MM-DD format
-  - start_date = end_date minus the backtest_window duration (e.g. "10Y" means 10 years ago, "6M" means 6 months ago)
-  - Set limit to the approximate number of trading days: 1M=21, 3M=63, 6M=126, 1Y=252, 2Y=504, 5Y=1260, 10Y=2520, 20Y=5040
+- CRITICAL: A "DATE REFERENCE" table is included at the top of the user message.
+  Find the row matching the strategy's backtest_window field and copy its
+  start_date, end_date, and limit VERBATIM into the tool call.
+- You do NOT know today's date. NEVER infer, guess, or calculate dates yourself —
+  always take them from the DATE REFERENCE table.
 - Call fetch_market_data_via_gateway with symbol, start_date, end_date, and limit
 
 STEP 3: ALWAYS call run_backtest
@@ -179,7 +213,9 @@ def invoke(payload, context=None):
         config._last_backtest_result = None
         config._results_summary_report = None
 
-        result = config._quant_agent.run_sync(payload.get("prompt"))
+        # Prepend resolved dates so the model never has to guess "today".
+        dated_prompt = f"{_date_reference()}\n{payload.get('prompt')}"
+        result = config._quant_agent.run_sync(dated_prompt)
 
         # Use _last_backtest_result directly (set by run_backtest tool)
         # This is more reliable than reading from Memory which may return stale data
