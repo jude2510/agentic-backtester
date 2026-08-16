@@ -1,0 +1,10 @@
+{
+  "_comment": "Symbol universe for the market-data pipeline. AMZN carries 25 years of history from the original CSV load; the rest start at the vendor's 5-year limit. Coverage is deliberately asymmetric - ingest.py records each symbol's actual range.",
+  "symbols": [
+    "AMZN",
+    "NVDA",
+    "MSFT",
+    "TSLA",
+    "SPY"
+  ]
+}

@@ -1,0 +1,18 @@
+# Market data ingestion pipeline
+#
+# pyiceberg >= 0.7 is REQUIRED for Table.overwrite(overwrite_filter=...), which
+# is what makes every write an idempotent, duplicate-proof filtered overwrite.
+#
+# The [pyiceberg-core] extra pulls the Rust transform kernels needed to WRITE a
+# table partitioned by a non-identity transform (here: year(date)). Without it,
+# writes fail with NotInstalledError even though the partition spec applies fine.
+# Note the market-data Lambda only READS this table and does not need the extra.
+pyiceberg[pyiceberg-core]>=0.9.0
+
+pyarrow>=14.0.0
+pandas>=2.0.0
+boto3>=1.35.0
+
+# Provider adapters (Massive REST) and typed models
+httpx>=0.24.0
+pydantic>=2.0.0
