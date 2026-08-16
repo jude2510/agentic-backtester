@@ -10,6 +10,49 @@ import time
 import config
 
 
+def _data_period() -> dict:
+    """Actual date range of the market data the backtest ran on.
+
+    Ground truth, taken from what the gateway returned rather than from the
+    requested window — the two can differ when a symbol's history is shorter
+    than the request.
+    """
+    try:
+        for payload in (config._stored_market_data or {}).values():
+            daily = payload.get('daily_data') or []
+            if daily:
+                return {'start': daily[0].get('date'),
+                        'end': daily[-1].get('date'),
+                        'trading_days': len(daily)}
+    except Exception as e:
+        print(f"⚠️ Could not derive data period: {e}")
+    return {}
+
+
+def _enrich(backtest_results: dict) -> dict:
+    """Overlay the authoritative backtest record onto the caller's dict.
+
+    The orchestrating LLM assembles the argument to this tool by hand and
+    routinely drops the trade list, the trade summary, and the period — the
+    summarizer then reports them as "unknown" while the main narrative quotes
+    them, so a single report contradicts itself. run_backtest already stored
+    the complete record, so prefer it over whatever the model passed.
+    """
+    enriched = dict(backtest_results or {})
+    authoritative = config._last_backtest_result or {}
+
+    for key in ('symbol', 'trades', 'trade_summary', 'metrics', 'initial_value',
+                'final_value', 'total_return', 'strategy_class'):
+        if key in authoritative:
+            enriched[key] = authoritative[key]
+
+    period = _data_period()
+    if period:
+        enriched['backtest_period'] = period
+
+    return enriched
+
+
 def create_results_summary(backtest_results: dict) -> str:
     """
     Analyze backtest performance and generate comprehensive trading strategy report.
@@ -41,6 +84,9 @@ def create_results_summary(backtest_results: dict) -> str:
 
     try:
         reasoning = "Analyzing backtest performance and generating summary..."
+
+        # Send the complete record, not just what the model chose to pass along.
+        backtest_results = _enrich(backtest_results)
 
         print(f"📥 INPUT: {backtest_results}")
         print(f"🧠 REASONING: {reasoning}")

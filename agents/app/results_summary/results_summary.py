@@ -105,19 +105,55 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
             strategy_name = backtest_results.get('strategy_class', 'Unknown Strategy')
             metrics = backtest_results.get('metrics', {})
 
+            # Trade detail and the actual data period. Without these the model
+            # can only report them as unknown — which read as hallucinated data
+            # gaps next to a narrative that quoted the very same numbers.
+            trades = backtest_results.get('trades') or []
+            trade_summary = backtest_results.get('trade_summary') or {}
+            period = backtest_results.get('backtest_period') or {}
+
+            if period:
+                period_block = (
+                    f"**Backtest Period**: {period.get('start')} to {period.get('end')} "
+                    f"({period.get('trading_days')} trading days)\n"
+                )
+            else:
+                period_block = ""
+
+            if trade_summary:
+                summary_block = f"\nTrade Summary:\n{json.dumps(trade_summary, indent=2)}\n"
+            else:
+                summary_block = ""
+
+            # Cap the trade list so a long backtest cannot blow up the prompt,
+            # while still showing both ends of the sequence.
+            if trades:
+                if len(trades) > 40:
+                    shown = trades[:20] + trades[-20:]
+                    note = (f"\n(showing first 20 and last 20 of {len(trades)} "
+                            f"trades)\n")
+                else:
+                    shown, note = trades, ""
+                trades_block = f"\nTrades:{note}\n{json.dumps(shown, indent=2)}\n"
+            else:
+                trades_block = "\nTrades: none executed\n"
+
             # Create a comprehensive prompt for AI analysis
             prompt = f"""Please analyze the following Backtrader backtest results:
 
 **Strategy Name**: {strategy_name}
 **Symbol Traded**: {symbol}
-**Initial Capital**: ${initial_value:,.2f}
+{period_block}**Initial Capital**: ${initial_value:,.2f}
 **Final Portfolio Value**: ${final_value:,.2f}
 **Total Return**: {total_return:.2f}%
 **Profit/Loss**: ${final_value - initial_value:,.2f}
 
 Performance Metrics:
 {json.dumps(metrics, indent=2)}
-
+{summary_block}{trades_block}
+Base your analysis only on the data above. Every field provided here is
+complete — do not describe the trade count, win rate, or backtest period as
+missing or unknown when they appear above.
 """
 
             # Use AI to analyze the results — output is a validated BacktestReport
