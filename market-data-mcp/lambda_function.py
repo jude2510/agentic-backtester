@@ -148,6 +148,11 @@ def format_market_data_response(arrow_table, symbol):
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "s3_tables_bucket": S3_TABLES_CONFIG['bucket_name']
     }
+
+    # Log what we RETURN, not just what we received. Without this there is no
+    # way to tell a short read here from a truncated response downstream.
+    print(f"RESPONSE {symbol.upper()}: {len(raw_data)} rows "
+          f"{raw_data[0]['date']} -> {raw_data[-1]['date']}")
     
     return {
         "success": True,
@@ -164,8 +169,12 @@ def lambda_handler(event, context):
         end_date = event.get('end_date')
         limit = event.get('limit', 252)
         
-        print(f"Querying S3 Tables for symbol: {symbol}, start_date: {start_date}, end_date: {end_date}")
-        
+        # `limit` matters as much as the dates — it is applied as "last N rows",
+        # so a smaller limit silently starts the series later.
+        print(f"REQUEST raw event: {json.dumps(event)}")
+        print(f"Querying S3 Tables for symbol: {symbol}, start_date: {start_date}, "
+              f"end_date: {end_date}, limit: {limit}")
+
         # Query S3 Tables data with filters
         arrow_table = query_s3_tables_data(
             symbol=symbol,
@@ -173,6 +182,9 @@ def lambda_handler(event, context):
             end_date=end_date,
             limit=limit
         )
+
+        if arrow_table is not None:
+            print(f"SCAN returned {len(arrow_table)} rows after filter+limit")
         
         # Format response
         response = format_market_data_response(arrow_table, symbol)
