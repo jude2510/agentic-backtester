@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.987.0",
+    "@aws-sdk/client-dynamodb": "^3.1116.0",
     "chart.js": "^3.9.1",
     "clsx": "^2.0.0",
     "framer-motion": "^10.18.0",

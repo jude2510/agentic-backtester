@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
 import { v4 as uuidv4 } from 'uuid';
+import { consumeBacktestQuota } from '@/lib/quota';
 
 const AGENT_ARN = process.env.AGENTCORE_ARN!;
 
@@ -29,6 +30,19 @@ function getClient() {
 export async function POST(request: NextRequest) {
   try {
     const strategyInput = await request.json();
+
+    // Gate before any model call. This handler is the only path that spends
+    // money (~$0.22/backtest, ~90% of it Bedrock), so the cap belongs here
+    // rather than deeper in the chain where work has already been done.
+    // `subject` stays undefined until auth lands; global caps carry it for now.
+    const quota = await consumeBacktestQuota(undefined);
+    if (!quota.allowed) {
+      return NextResponse.json(
+        { success: false, error: quota.reason, limitHit: quota.limitHit },
+        { status: 429 }
+      );
+    }
+
     const jobId = uuidv4();
 
     // Start async processing
