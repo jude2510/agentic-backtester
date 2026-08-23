@@ -7,6 +7,12 @@ import pandas as pd
 from io import StringIO
 from typing import Dict, Any
 
+from tools.strategy_sandbox import (
+    SandboxViolation,
+    build_sandbox_globals,
+    validate_strategy_code,
+)
+
 class TradeRecorder(bt.Analyzer):
     """Analyzer that records individual trade details.
 
@@ -117,11 +123,21 @@ class BacktestTool():
         try:
             # print(f"\n🔍 BACKTEST DEBUG - Starting detailed analysis...")
 
-            # STEP 1: Execute strategy code to get strategy class
-            print(f"📝 STEP 1: Executing strategy code...")
+            # STEP 1: Execute strategy code to get strategy class.
+            # The code is generated from a user-supplied description, so it is
+            # untrusted input: validate it statically, then run it against a
+            # restricted builtins namespace. See tools/strategy_sandbox.py.
+            print(f"📝 STEP 1: Validating and executing strategy code...")
             try:
-                exec_globals = {'bt': bt, 'btind': bt.indicators}
-                exec(strategy_code, exec_globals)
+                safe_code = validate_strategy_code(strategy_code)
+                print("🔒 Strategy code passed sandbox validation")
+            except SandboxViolation as e:
+                print(f"🚫 SANDBOX REJECTED strategy code: {e}")
+                return {'error': f'Strategy code rejected by sandbox: {str(e)}'}
+
+            try:
+                exec_globals = build_sandbox_globals(bt)
+                exec(safe_code, exec_globals)
                 print(f"✅ Strategy code executed successfully")
             except Exception as e:
                 print(f"❌ Strategy code execution failed: {e}")
