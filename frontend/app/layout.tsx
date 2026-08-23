@@ -7,6 +7,7 @@ export const metadata: Metadata = {
 };
 
 import { BacktestProvider } from "@/lib/BacktestContext";
+import Disclaimer from "@/components/Disclaimer";
 
 export default function RootLayout({
   children,
@@ -15,8 +16,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-dark-primary">
-        <BacktestProvider>{children}</BacktestProvider>
+      <body className="min-h-screen bg-dark-primary flex flex-col">
+        <BacktestProvider>
+          <div className="flex-1">{children}</div>
+          {/* Site-wide, so a visitor landing straight on a results page still
+              sees it — the README is not where anyone reads a disclaimer. */}
+          <Disclaimer />
+        </BacktestProvider>
       </body>
     </html>
   );
