@@ -1,40 +1,40 @@
+/**
+ * Backtest job API.
+ *
+ * POST enqueues a backtest and returns immediately; GET polls for the result.
+ *
+ * Both the job state and the slow work live outside this route on purpose. A
+ * backtest takes ~85 seconds, and serverless SSR freezes its execution
+ * environment as soon as a response is sent — so an un-awaited background task
+ * started here would be killed mid-flight, and a per-instance in-memory job map
+ * would be invisible to whichever instance served the next poll.
+ *
+ * The route therefore does only fast, stateless things: check quota, write a
+ * job row, kick the worker, read a job row.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import { consumeBacktestQuota } from '@/lib/quota';
 
-const AGENT_ARN = process.env.AGENTCORE_ARN!;
+const REGION = process.env.AWS_REGION || 'us-east-1';
+const JOBS_TABLE = process.env.JOBS_TABLE_NAME || 'agentic-backtest-jobs';
+const WORKER_FN = process.env.WORKER_FUNCTION_NAME || 'agentic-backtest-worker';
 
-// In-memory store with persistence across hot reloads (use Redis/DynamoDB in production)
-const results = new Map<string, any>();
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
+const lambda = new LambdaClient({ region: REGION });
 
-// Add some basic persistence for development
-if (typeof global !== 'undefined') {
-  // @ts-ignore
-  global.backtestResults = global.backtestResults || new Map();
-  // @ts-ignore
-  const persistedResults = global.backtestResults;
-
-  // Restore results from global
-  for (const [key, value] of persistedResults) {
-    results.set(key, value);
-  }
-}
-
-function getClient() {
-  return new BedrockAgentCoreClient({
-    region: process.env.AWS_REGION || 'us-east-1',
-  });
-}
+const JOB_TTL_SECONDS = 24 * 60 * 60;
 
 export async function POST(request: NextRequest) {
   try {
     const strategyInput = await request.json();
 
-    // Gate before any model call. This handler is the only path that spends
-    // money (~$0.22/backtest, ~90% of it Bedrock), so the cap belongs here
-    // rather than deeper in the chain where work has already been done.
-    // `subject` stays undefined until auth lands; global caps carry it for now.
+    // Gate before anything is spent. This is the only path that triggers model
+    // calls (~$0.22 each, ~90% Bedrock), so the cap belongs at the front of it.
     const quota = await consumeBacktestQuota(undefined);
     if (!quota.allowed) {
       return NextResponse.json(
@@ -44,17 +44,42 @@ export async function POST(request: NextRequest) {
     }
 
     const jobId = uuidv4();
+    const now = Math.floor(Date.now() / 1000);
 
-    // Start async processing
-    processBacktest(jobId, strategyInput);
+    // Write the job before invoking, so a poll arriving before the worker has
+    // started finds "queued" rather than a 404.
+    await ddb.send(
+      new PutCommand({
+        TableName: JOBS_TABLE,
+        Item: {
+          jobId,
+          status: 'queued',
+          startTime: Date.now(),
+          updatedAt: now,
+          expiresAt: now + JOB_TTL_SECONDS,
+        },
+      })
+    );
 
-    // Return immediately with job ID
+    // Event invocation: returns as soon as Lambda accepts the payload, and the
+    // worker keeps running after this request is gone.
+    await lambda.send(
+      new InvokeCommand({
+        FunctionName: WORKER_FN,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ jobId, strategyInput })),
+      })
+    );
+
+    console.log(`[API] queued job ${jobId}`);
+
     return NextResponse.json({
       success: true,
       jobId,
-      message: 'Backtest started. Poll /api/backtest-status/{jobId} for results.'
+      message: 'Backtest started. Poll this endpoint with ?jobId= for results.',
     });
   } catch (error: any) {
+    console.error('[API] failed to queue backtest:', error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }
@@ -62,205 +87,35 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processBacktest(jobId: string, strategyInput: any) {
-  const initialStatus = { status: 'processing', startTime: Date.now() };
-  results.set(jobId, initialStatus);
-
-  // Persist to global for hot reload survival
-  if (typeof global !== 'undefined') {
-    // @ts-ignore
-    global.backtestResults = global.backtestResults || new Map();
-    // @ts-ignore
-    global.backtestResults.set(jobId, initialStatus);
-  }
-
-  try {
-    const client = getClient();
-    const sessionId = uuidv4();
-    const prompt = `how is the strategy performance: ${JSON.stringify(strategyInput)}`;
-
-    console.log('========================================');
-    console.log('[AgentCore] PROMPT:');
-    console.log('========================================');
-    console.log(prompt);
-    console.log('========================================');
-
-    const command = new InvokeAgentRuntimeCommand({
-      agentRuntimeArn: AGENT_ARN,
-      runtimeSessionId: sessionId,
-      payload: Buffer.from(JSON.stringify({ prompt }))
-    });
-
-    const response = await client.send(command);
-
-    if (!response.response) {
-      throw new Error('No response from AgentCore');
-    }
-
-    const chunks: Uint8Array[] = [];
-    // @ts-ignore
-    for await (const chunk of response.response) {
-      if (chunk) chunks.push(chunk);
-    }
-
-    const fullResponse = Buffer.concat(chunks).toString('utf-8');
-
-    console.log('========================================');
-    console.log('[AgentCore] RAW RESPONSE:');
-    console.log('========================================');
-    console.log(fullResponse);
-    console.log('========================================');
-
-    // Parse the response
-    // invoke_agent_runtime may return a JSON string (double-encoded) or a JSON object
-    let result;
-    try {
-      result = JSON.parse(fullResponse);
-      // Handle double-serialization: if result is a string, parse again
-      if (typeof result === 'string') {
-        result = JSON.parse(result);
-      }
-    } catch (parseError) {
-      throw new Error('Failed to parse AgentCore response');
-    }
-
-    // Extract the text content from the agent response
-    // quant_agent returns: {"result": "<LLM text>", "strategy_code": "...", "trades": [...], ...}
-    // BedrockAgentCoreApp may also wrap as: {"result": {"content": [{"text": "..."}]}}
-    let analysisText: string;
-    if (typeof result.result === 'string') {
-      // Direct string response from quant_agent invoke()
-      analysisText = result.result;
-    } else if (result.result?.content?.[0]?.text) {
-      // Wrapped format from BedrockAgentCoreApp
-      analysisText = result.result.content[0].text;
-    } else {
-      throw new Error('Unexpected response format from AgentCore');
-    }
-
-    const strategyCode = result.strategy_code || null;
-    const trades = result.trades || [];
-    const tradeSummary = result.trade_summary || {};
-    const backtestMetrics = result.backtest_metrics || null;
-    const versions = result.versions || null;
-    const summaryReport = result.summary_report || null;
-
-    console.log('========================================');
-    console.log('[AgentCore] EXTRACTED TEXT:');
-    console.log('========================================');
-    console.log(analysisText);
-    console.log('========================================');
-    if (strategyCode) {
-      console.log('[AgentCore] Strategy code received (' + strategyCode.length + ' chars)');
-    }
-    console.log(`[AgentCore] Trades received: ${trades.length}`);
-    if (backtestMetrics) {
-      console.log('[AgentCore] Backtest metrics received:', JSON.stringify(backtestMetrics));
-    }
-
-    const completeResult = {
-      status: 'complete',
-      data: {
-        success: true,
-        analysis: analysisText,
-        strategyInput,
-        strategyCode,
-        trades,
-        trade_summary: tradeSummary,
-        backtest_metrics: backtestMetrics,
-        summary_report: summaryReport,
-        versions
-      }
-    };
-
-    console.log(`[API] 💾 Setting complete result for job ${jobId}:`, JSON.stringify(completeResult, null, 2));
-    results.set(jobId, completeResult);
-    console.log(`[API] ✅ Job ${jobId} marked as complete in results map`);
-
-    // Persist to global FIRST, then local
-    if (typeof global !== 'undefined') {
-      // @ts-ignore
-      global.backtestResults = global.backtestResults || new Map();
-      // @ts-ignore
-      global.backtestResults.set(jobId, completeResult);
-      console.log(`[API] ✅ Job ${jobId} persisted to global storage`);
-    }
-
-    // Double-check that the result was actually set
-    const verifyResult = results.get(jobId);
-    console.log(`[API] 🔍 Verification - Job ${jobId} status in map:`, verifyResult?.status);
-
-    console.log(`[API] 🎉 processBacktest completed successfully for job ${jobId}`);
-  } catch (error: any) {
-    console.log('========================================');
-    console.log('[AgentCore] ERROR:');
-    console.log('========================================');
-    console.log('Error message:', error.message);
-    console.log('Error stack:', error.stack);
-    console.log('========================================');
-
-    const errorResult = {
-      status: 'error',
-      error: error.message
-    };
-
-    console.log(`[API] ❌ Setting error result for job ${jobId}:`, errorResult);
-    results.set(jobId, errorResult);
-
-    // Persist to global
-    if (typeof global !== 'undefined') {
-      // @ts-ignore
-      global.backtestResults = global.backtestResults || new Map();
-      // @ts-ignore
-      global.backtestResults.set(jobId, errorResult);
-    }
-
-    console.log(`[API] 💥 processBacktest failed for job ${jobId}`);
-  }
-}
-
 export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const jobId = url.searchParams.get('jobId');
+  const jobId = new URL(request.url).searchParams.get('jobId');
 
   if (!jobId) {
     return NextResponse.json({ error: 'jobId required' }, { status: 400 });
   }
 
-  // Always check global first (most up-to-date after hot reloads), then local
-  console.log(`[API] 🔍 GET request for job ${jobId}`);
-  let result;
+  try {
+    const { Item } = await ddb.send(
+      new GetCommand({ TableName: JOBS_TABLE, Key: { jobId } })
+    );
 
-  // @ts-ignore
-  if (typeof global !== 'undefined' && global.backtestResults) {
-    // @ts-ignore
-    result = global.backtestResults.get(jobId);
-    console.log(`[API] 📋 Global result for job ${jobId}:`, result?.status || 'NOT_FOUND');
-    if (result) {
-      // Sync to local map
-      results.set(jobId, result);
+    if (!Item) {
+      return NextResponse.json(
+        { error: 'Job not found. It may have expired.', jobId },
+        { status: 404 }
+      );
     }
-  }
 
-  // Fallback to local if not in global
-  if (!result) {
-    result = results.get(jobId);
-    console.log(`[API] 📋 Local result for job ${jobId}:`, result?.status || 'NOT_FOUND');
-  }
+    // 'queued' is an implementation detail of the handoff; the UI only
+    // distinguishes "still working" from "done".
+    const status = Item.status === 'queued' ? 'processing' : Item.status;
 
-  if (!result) {
-    console.log(`[API] Job ${jobId} not found. Available jobs:`, Array.from(results.keys()));
-    return NextResponse.json({
-      error: 'Job not found. It may have expired or the server restarted.',
-      jobId,
-      availableJobs: Array.from(results.keys()).length
-    }, { status: 404 });
+    return NextResponse.json(
+      { status, data: Item.data, error: Item.error, startTime: Item.startTime },
+      { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+    );
+  } catch (error: any) {
+    console.error(`[API] failed to read job ${jobId}:`, error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
-  console.log(`[API] 📤 Returning result for job ${jobId}:`, JSON.stringify(result, null, 2));
-  return NextResponse.json(result, {
-    headers: {
-      'Cache-Control': 'no-store, no-cache, must-revalidate',
-    },
-  });
 }
