@@ -41,8 +41,17 @@ class Recommendations(BaseModel):
 class BacktestReport(BaseModel):
     """A structured quant review of a Backtrader backtest."""
     model_config = ConfigDict(populate_by_name=True)
-    executive_summary: str = Field(alias="executiveSummary", description="2-3 sentence overview of the strategy's viability")
-    detailed_analysis: str = Field(alias="detailedAnalysis", description="In-depth examination with specific numbers and interpretations")
+    executive_summary: str = Field(
+        alias="executiveSummary",
+        description="2-3 sentences, at most 70 words, on whether the strategy is viable",
+    )
+    detailed_analysis: str = Field(
+        alias="detailedAnalysis",
+        description=(
+            "At most 4 short paragraphs, 300 words total. Cite the supplied "
+            "statistics; do not recompute them or restate the full trade list."
+        ),
+    )
     concerns_and_recommendations: Recommendations = Field(alias="concernsAndRecommendations")
 
 
@@ -60,9 +69,19 @@ When analyzing, consider:
 - Overfitting / data-quality red flags: Sharpe > 3, win rate > 70%, unrealistically smooth equity curves, very few trades (< 30), look-ahead or survivorship bias, ignored transaction costs
 
 Populate the report fields:
-- executiveSummary: a 2-3 sentence overview of the strategy's viability
-- detailedAnalysis: an in-depth examination citing specific numbers and interpretations
-- concernsAndRecommendations: highPriority (critical fixes), mediumPriority (optimizations), and considerTesting (experimental ideas)
+- executiveSummary: 2-3 sentences, at most 70 words
+- detailedAnalysis: at most 4 short paragraphs, 300 words total
+- concernsAndRecommendations: at most 3 items per list, one sentence each —
+  highPriority (critical fixes), mediumPriority (optimizations), considerTesting (experimental ideas)
+
+BE CONCISE. Length is not thoroughness. A senior quant writes a tight memo, not
+an essay; the reader wants the verdict and the three things that matter most.
+
+Trade statistics (profit factor, average win/loss, expectancy, concentration)
+are supplied pre-computed. Cite them directly — do not recalculate them from the
+trade list, and do not enumerate individual trades beyond the two or three that
+make a point. Where a metric is not supplied, say so in one clause rather than
+listing everything that is missing.
 
 Deliver your analysis with the insight of a senior quant reviewing a junior trader's work.
 """
@@ -111,6 +130,9 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
             trades = backtest_results.get('trades') or []
             trade_summary = backtest_results.get('trade_summary') or {}
             period = backtest_results.get('backtest_period') or {}
+            trade_stats = backtest_results.get('trade_statistics') or {}
+            shown = backtest_results.get('trades_shown')
+            total = backtest_results.get('trades_total')
 
             if period:
                 period_block = (
@@ -125,16 +147,17 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
             else:
                 summary_block = ""
 
-            # Cap the trade list so a long backtest cannot blow up the prompt,
-            # while still showing both ends of the sequence.
+            # Pre-computed aggregates do the analytical work; the trade list is
+            # only illustrative, so the caller sends a representative slice.
+            if trade_stats:
+                stats_block = f"\nTrade Statistics (pre-computed — cite, do not recalculate):\n{json.dumps(trade_stats, indent=2)}\n"
+            else:
+                stats_block = ""
+
             if trades:
-                if len(trades) > 40:
-                    shown = trades[:20] + trades[-20:]
-                    note = (f"\n(showing first 20 and last 20 of {len(trades)} "
-                            f"trades)\n")
-                else:
-                    shown, note = trades, ""
-                trades_block = f"\nTrades:{note}\n{json.dumps(shown, indent=2)}\n"
+                note = (f" (the {shown} most extreme of {total} trades)"
+                        if shown and total and shown < total else "")
+                trades_block = f"\nRepresentative trades{note}:\n{json.dumps(trades, indent=2)}\n"
             else:
                 trades_block = "\nTrades: none executed\n"
 
@@ -150,7 +173,7 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
 
 Performance Metrics:
 {json.dumps(metrics, indent=2)}
-{summary_block}{trades_block}
+{summary_block}{stats_block}{trades_block}
 Base your analysis only on the data above. Every field provided here is
 complete — do not describe the trade count, win rate, or backtest period as
 missing or unknown when they appear above.

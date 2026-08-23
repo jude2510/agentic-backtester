@@ -29,6 +29,55 @@ def _data_period() -> dict:
     return {}
 
 
+def _trade_statistics(trades: list) -> dict:
+    """Derive the aggregates a reviewer actually reasons about.
+
+    Computed here rather than left to the model for two reasons: summing P&L
+    across dozens of trades in prose is slow and error-prone, and every token
+    the model spends doing arithmetic is a token it isn't spending on analysis.
+    Concentration is included because "most of the profit came from three
+    trades" is the single most important thing to notice about a thin sample.
+    """
+    if not trades:
+        return {}
+
+    pnls = [float(t.get('pnl', 0) or 0) for t in trades]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    net = sum(pnls)
+
+    top3 = sum(sorted(wins, reverse=True)[:3])
+
+    stats = {
+        'gross_profit': round(gross_profit, 2),
+        'gross_loss': round(gross_loss, 2),
+        'net_pnl': round(net, 2),
+        'profit_factor': round(gross_profit / gross_loss, 2) if gross_loss else None,
+        'avg_win': round(gross_profit / len(wins), 2) if wins else 0.0,
+        'avg_loss': round(-gross_loss / len(losses), 2) if losses else 0.0,
+        'largest_win': round(max(pnls), 2),
+        'largest_loss': round(min(pnls), 2),
+        'expectancy_per_trade': round(net / len(pnls), 2),
+        'total_commission': round(sum(float(t.get('commission', 0) or 0) for t in trades), 2),
+    }
+
+    if gross_profit > 0:
+        stats['top3_winners_pct_of_gross_profit'] = round(100 * top3 / gross_profit, 1)
+
+    return stats
+
+
+def _notable_trades(trades: list, n: int = 5) -> list:
+    """The n best and n worst trades — more informative than the first n."""
+    if len(trades) <= 2 * n:
+        return trades
+    ranked = sorted(trades, key=lambda t: float(t.get('pnl', 0) or 0))
+    return ranked[:n] + ranked[-n:]
+
+
 def _enrich(backtest_results: dict) -> dict:
     """Overlay the authoritative backtest record onto the caller's dict.
 
@@ -49,6 +98,16 @@ def _enrich(backtest_results: dict) -> dict:
     period = _data_period()
     if period:
         enriched['backtest_period'] = period
+
+    # Hand over pre-computed aggregates plus a representative slice of trades
+    # rather than the full list. The statistics carry the analytical content,
+    # so shipping every trade only inflates the prompt — and the response.
+    all_trades = enriched.get('trades') or []
+    if all_trades:
+        enriched['trade_statistics'] = _trade_statistics(all_trades)
+        enriched['trades'] = _notable_trades(all_trades)
+        enriched['trades_shown'] = len(enriched['trades'])
+        enriched['trades_total'] = len(all_trades)
 
     return enriched
 
