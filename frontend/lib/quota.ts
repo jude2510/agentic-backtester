@@ -30,6 +30,16 @@ const MONTHLY_LIMIT = Number(process.env.QUOTA_MONTHLY ?? 110);
 const DAILY_LIMIT = Number(process.env.QUOTA_DAILY ?? 15);
 const PER_USER_DAILY_LIMIT = Number(process.env.QUOTA_PER_USER_DAILY ?? 3);
 
+// Chat and history are single model calls rather than a four-agent pipeline —
+// roughly a fifth the cost of a backtest — so they get their own, looser
+// counters. They are metered all the same: any route that reaches a model is a
+// route that spends money, and leaving one ungated makes the other caps
+// decorative. Sized to about $5 of the $25 monthly ceiling.
+const CHAT_MONTHLY_LIMIT = Number(process.env.QUOTA_CHAT_MONTHLY ?? 120);
+const CHAT_DAILY_LIMIT = Number(process.env.QUOTA_CHAT_DAILY ?? 20);
+
+export type QuotaKind = 'backtest' | 'chat';
+
 // Set QUOTA_ENFORCED=false for local development against your own credentials.
 const ENFORCED = process.env.QUOTA_ENFORCED !== 'false';
 
@@ -56,20 +66,23 @@ interface Counter {
   label: string;
 }
 
-function counters(subject?: string): Counter[] {
+function counters(kind: QuotaKind, subject?: string): Counter[] {
   const now = epoch();
+  const isChat = kind === 'chat';
+  const prefix = isChat ? 'chat' : 'global';
+
   const list: Counter[] = [
     {
-      id: `global#month#${utcMonth()}`,
-      limit: MONTHLY_LIMIT,
+      id: `${prefix}#month#${utcMonth()}`,
+      limit: isChat ? CHAT_MONTHLY_LIMIT : MONTHLY_LIMIT,
       ttl: now + 40 * DAY_SECONDS,
-      label: 'monthly capacity',
+      label: isChat ? 'monthly chat capacity' : 'monthly capacity',
     },
     {
-      id: `global#day#${utcDay()}`,
-      limit: DAILY_LIMIT,
+      id: `${prefix}#day#${utcDay()}`,
+      limit: isChat ? CHAT_DAILY_LIMIT : DAILY_LIMIT,
       ttl: now + 2 * DAY_SECONDS,
-      label: 'daily capacity',
+      label: isChat ? 'daily chat capacity' : 'daily capacity',
     },
   ];
 
@@ -77,7 +90,7 @@ function counters(subject?: string): Counter[] {
   // identity. Until then the global caps carry the protection on their own —
   // an unauthenticated identifier (IP, cookie) is trivially rotated and would
   // give a false sense of per-user limiting.
-  if (subject) {
+  if (subject && !isChat) {
     list.push({
       id: `user#${subject}#day#${utcDay()}`,
       limit: PER_USER_DAILY_LIMIT,
@@ -148,10 +161,13 @@ export interface QuotaResult {
  * Counters are incremented in order and rolled back if a later one refuses, so
  * a request blocked by the monthly cap does not also burn daily capacity.
  */
-export async function consumeBacktestQuota(subject?: string): Promise<QuotaResult> {
+export async function consumeQuota(
+  kind: QuotaKind,
+  subject?: string
+): Promise<QuotaResult> {
   if (!ENFORCED) return { allowed: true };
 
-  const wanted = counters(subject);
+  const wanted = counters(kind, subject);
   const consumed: Counter[] = [];
 
   try {
@@ -159,13 +175,14 @@ export async function consumeBacktestQuota(subject?: string): Promise<QuotaResul
       const ok = await tryIncrement(c);
       if (!ok) {
         await Promise.all(consumed.map(release));
+        const unit = kind === 'chat' ? 'chat messages' : 'backtests';
         return {
           allowed: false,
           limitHit: c.label,
           reason:
             c.label === 'your daily limit'
-              ? `You've used your ${c.limit} backtests for today. This is a personal demo project running on a small budget — try again tomorrow.`
-              : `This demo has reached its ${c.label} (${c.limit} backtests). It runs on a capped personal budget to keep it free; capacity resets shortly.`,
+              ? `You've used your ${c.limit} ${unit} for today. This is a personal demo project running on a small budget — try again tomorrow.`
+              : `This demo has reached its ${c.label} (${c.limit} ${unit}). It runs on a capped personal budget to keep it free; capacity resets shortly.`,
         };
       }
       consumed.push(c);
@@ -181,4 +198,14 @@ export async function consumeBacktestQuota(subject?: string): Promise<QuotaResul
       reason: 'Unable to verify remaining demo capacity right now. Please try again shortly.',
     };
   }
+}
+
+/** Convenience wrapper — the backtest route is the main consumer. */
+export function consumeBacktestQuota(subject?: string): Promise<QuotaResult> {
+  return consumeQuota('backtest', subject);
+}
+
+/** Chat and history: cheaper single model calls, metered separately. */
+export function consumeChatQuota(subject?: string): Promise<QuotaResult> {
+  return consumeQuota('chat', subject);
 }

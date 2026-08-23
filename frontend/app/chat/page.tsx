@@ -35,17 +35,43 @@ export default function ChatPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/api/chat`, {
+      const base = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+      // Enqueue, then poll. A chat turn can run past the hosting platform's
+      // 30-second request ceiling, so the answer cannot be awaited inline.
+      const startResponse = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
       });
 
-      const data = await response.json();
+      const started = await startResponse.json();
+      if (!started.success) {
+        throw new Error(started.error || `HTTP ${startResponse.status}`);
+      }
+
+      const deadline = Date.now() + 5 * 60 * 1000;
+      let data: any = null;
+
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2000));
+
+        const poll = await fetch(`${base}/api/chat?jobId=${started.jobId}`);
+        const result = await poll.json();
+
+        if (result.status === 'complete') { data = result; break; }
+        if (result.status === 'error') {
+          throw new Error(result.error || 'The assistant failed to respond');
+        }
+      }
+
+      if (!data) {
+        throw new Error('Timed out waiting for a response. Please try again.');
+      }
 
       const assistantMessage: Message = {
         role: 'assistant',
-        content: data.success ? data.message : `Error: ${data.error}`,
+        content: data.message,
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMessage]);

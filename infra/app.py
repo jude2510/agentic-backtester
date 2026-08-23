@@ -25,6 +25,10 @@ backend_stack.add_dependency(data_stack)
 HostingStack(
     app, "agentic-backtest-hosting",
     alert_email=app.node.try_get_context("alertEmail") or os.getenv("BUDGET_ALERT_EMAIL"),
+    agentcore_arn=os.getenv(
+        "AGENTCORE_ARN",
+        "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/quant_agent-eYNAk3BW0d",
+    ),
     env=env,
 )
 

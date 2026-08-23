@@ -10,8 +10,14 @@ So the API route writes a job and invokes this asynchronously; this function
 does the slow part with a Lambda timeout measured in minutes, and writes the
 outcome back to DynamoDB for the polling GET to read.
 
-Event shape:
-    {"jobId": "...", "strategyInput": {...}}
+Chat runs through here too. It is a single model call rather than a four-agent
+pipeline, but it still takes longer than the 30-second ceiling Amplify enforces
+on server-side rendering — a limit that is not configurable, so anything slower
+has to leave the request cycle.
+
+Event shapes:
+    {"jobId": "...", "strategyInput": {...}}       # backtest
+    {"jobId": "...", "mode": "chat", "prompt": "..."}
 """
 
 import json
@@ -93,19 +99,28 @@ def _extract(payload: dict) -> dict:
 
 def handler(event, context):
     job_id = event["jobId"]
-    strategy_input = event["strategyInput"]
+    mode = event.get("mode", "backtest")
 
-    print(f"[worker] starting job {job_id}")
+    print(f"[worker] starting job {job_id} (mode={mode})")
     started = time.time()
 
     try:
         _put(job_id, "processing", startTime=int(started * 1000))
 
-        prompt = f"how is the strategy performance: {json.dumps(strategy_input)}"
+        if mode == "chat":
+            # The agent dispatches on this field and defaults to "backtest",
+            # so omitting it silently runs the whole pipeline instead.
+            agent_payload = {"mode": "chat", "prompt": event["prompt"]}
+        else:
+            strategy_input = event["strategyInput"]
+            agent_payload = {
+                "prompt": f"how is the strategy performance: {json.dumps(strategy_input)}"
+            }
+
         response = _agentcore.invoke_agent_runtime(
             agentRuntimeArn=AGENT_ARN,
             runtimeSessionId=job_id.replace("-", "") + "0" * 8,  # >=33 chars
-            payload=json.dumps({"prompt": prompt}).encode("utf-8"),
+            payload=json.dumps(agent_payload).encode("utf-8"),
             qualifier="DEFAULT",
         )
 
@@ -115,12 +130,22 @@ def handler(event, context):
         if isinstance(payload, str):
             payload = json.loads(payload)
 
-        data = _extract(payload)
-        data["strategyInput"] = strategy_input
-
-        _put(job_id, "complete", data=data)
-        print(f"[worker] job {job_id} complete in {time.time() - started:.1f}s "
-              f"({len(data.get('trades') or [])} trades)")
+        if mode == "chat":
+            message = payload.get("result") or {}
+            content = message.get("content") or [{}]
+            data = {
+                "success": True,
+                "message": content[0].get("text", "") if content else "",
+            }
+            _put(job_id, "complete", data=data)
+            print(f"[worker] job {job_id} chat complete in {time.time() - started:.1f}s "
+                  f"({len(data['message'])} chars)")
+        else:
+            data = _extract(payload)
+            data["strategyInput"] = event["strategyInput"]
+            _put(job_id, "complete", data=data)
+            print(f"[worker] job {job_id} complete in {time.time() - started:.1f}s "
+                  f"({len(data.get('trades') or [])} trades)")
 
     except Exception as e:
         # Record the failure so the UI can stop polling and say something

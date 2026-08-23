@@ -127,6 +127,37 @@ class HostingStack(Stack):
         self.jobs_table = jobs_table
         self.worker = worker
 
+        # --- Amplify SSR compute role ----------------------------------------
+        # Amplify Hosting can assume a role for its server-side runtime
+        # (computeRoleArn), so the API routes get temporary credentials rather
+        # than long-lived access keys sitting in environment variables.
+        #
+        # Scoped to what the routes actually do: increment quota counters, read
+        # and write job rows, kick the worker, and — for the chat and history
+        # routes, which are single synchronous model calls rather than the full
+        # backtest pipeline — invoke the quant agent directly. Those two routes
+        # are metered by the chat quota for exactly this reason: any path that
+        # reaches a model is a path that spends money.
+        ssr_role = iam.Role(
+            self, "AmplifySSRComputeRole",
+            role_name="agentic-backtest-amplify-ssr",
+            assumed_by=iam.ServicePrincipal("amplify.amazonaws.com"),
+            description="Runtime role for the Agentic Backtester Next.js SSR routes",
+        )
+        quota_table.grant_read_write_data(ssr_role)
+        jobs_table.grant_read_write_data(ssr_role)
+        worker.grant_invoke(ssr_role)
+
+        if agentcore_arn:
+            ssr_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock-agentcore:InvokeAgentRuntime"],
+                    resources=[agentcore_arn, f"{agentcore_arn}/*"],
+                )
+            )
+
+        self.ssr_role = ssr_role
+
         # --- Budget backstop -------------------------------------------------
         topic = sns.Topic(
             self, "BudgetAlertTopic",
@@ -193,6 +224,8 @@ class HostingStack(Stack):
         CfnOutput(self, "WorkerFunctionName", value=worker.function_name,
                   description="Lambda that runs a backtest to completion")
         CfnOutput(self, "WorkerFunctionArn", value=worker.function_arn)
+        CfnOutput(self, "AmplifySSRComputeRoleArn", value=ssr_role.role_arn,
+                  description="Attach to the Amplify app as its SSR compute role")
         CfnOutput(self, "BudgetAlertTopicArn", value=topic.topic_arn,
                   description="SNS topic for budget threshold alerts")
         CfnOutput(self, "MonthlyBacktestLimit", value=str(MONTHLY_BACKTEST_LIMIT))
