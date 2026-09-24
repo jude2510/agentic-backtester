@@ -7,7 +7,8 @@
 # table partitioned by a non-identity transform (here: year(date)). Without it,
 # writes fail with NotInstalledError even though the partition spec applies fine.
 # Note the market-data Lambda only READS this table and does not need the extra.
-pyiceberg[pyiceberg-core]>=0.9.0
+# Pinned to match market-data-mcp/requirements.txt — bump both together.
+pyiceberg[pyiceberg-core]==0.11.1
 
 pyarrow>=14.0.0
 pandas>=2.0.0
