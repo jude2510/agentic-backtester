@@ -93,6 +93,7 @@ def _extract(payload: dict) -> dict:
         "trade_summary": payload.get("trade_summary", {}),
         "backtest_metrics": payload.get("backtest_metrics"),
         "summary_report": payload.get("summary_report"),
+        "data_warnings": payload.get("data_warnings", []),
         "versions": payload.get("versions", {}),
     }
 

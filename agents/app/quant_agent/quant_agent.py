@@ -212,6 +212,8 @@ def invoke(payload, context=None):
         config._generated_strategy_code = None
         config._last_backtest_result = None
         config._results_summary_report = None
+        config._stored_market_data = {}
+        config._data_coverage_warnings = []
 
         # Prepend resolved dates so the model never has to guess "today".
         dated_prompt = f"{_date_reference()}\n{payload.get('prompt')}"
@@ -262,6 +264,9 @@ def invoke(payload, context=None):
             "trades": trades,
             "trade_summary": trade_summary,
             "backtest_metrics": backtest_metrics,
+            # Deterministic, not left to the model to mention: the UI shows these
+            # as a banner whatever the narrative says.
+            "data_warnings": config._data_coverage_warnings,
             "versions": {
                 "quant_agent": config.VERSION,
                 "strategy_generator": config._strategy_generator_version,

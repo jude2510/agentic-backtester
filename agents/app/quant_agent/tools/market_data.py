@@ -9,10 +9,50 @@ import time
 import base64
 import urllib.request
 import urllib.parse
-from datetime import datetime
-from typing import Dict, Any
+from datetime import date, datetime
+from typing import Dict, Any, List
 import httpx
 import config
+
+# Same tolerance the ingest pipeline uses for vendor truncation, so weekends
+# and market holidays around a window boundary don't read as missing data.
+COVERAGE_TOLERANCE_DAYS = 5
+
+
+def check_coverage(daily_data: List[Dict[str, Any]], start_date: str = None,
+                   end_date: str = None) -> List[str]:
+    """Compare the rows returned against the window that was requested.
+
+    A short read never raises. The Lambda returns whatever the table holds, so
+    stale data or a symbol with shorter history comes back as a successful,
+    well-formed, smaller result, and the backtest runs on it without complaint.
+    This makes the gap explicit so it reaches the model, the report and the UI.
+    """
+    if not daily_data:
+        return ["no market data rows were returned"]
+
+    dates = [r['date'] for r in daily_data if r.get('date')]
+    first = date.fromisoformat(min(dates))
+    last = date.fromisoformat(max(dates))
+    warnings = []
+
+    if start_date:
+        gap = (first - date.fromisoformat(start_date)).days
+        if gap > COVERAGE_TOLERANCE_DAYS:
+            warnings.append(
+                f"data starts {first}, {gap} days after the requested start "
+                f"{start_date} — stored history for this symbol is shorter than the window"
+            )
+
+    if end_date:
+        gap = (date.fromisoformat(end_date) - last).days
+        if gap > COVERAGE_TOLERANCE_DAYS:
+            warnings.append(
+                f"data ends {last}, {gap} days before the requested end "
+                f"{end_date} — the stored market data is out of date"
+            )
+
+    return warnings
 
 
 def extract_market_data_from_gateway_response(gateway_response: Dict[str, Any]) -> Dict[str, Any]:
@@ -286,6 +326,11 @@ def fetch_market_data_via_gateway(symbol: str, start_date: str = None, end_date:
 
     start_time = time.time()
 
+    # Clear first: the runtime container is reused across requests, so a failed
+    # fetch must not leave the previous request's data for run_backtest to use.
+    config._stored_market_data = {}
+    config._data_coverage_warnings = []
+
     try:
         # Call synchronous function directly with date range parameters
         gateway_response = call_gateway_market_data_with_cognito(symbol, start_date, end_date, limit)
@@ -308,6 +353,16 @@ def fetch_market_data_via_gateway(symbol: str, start_date: str = None, end_date:
 
             columns_str = ', '.join(columns)
             info = f"✅ Market data fetch successfully for {symbol_key} to have {total_rows} total_rows with columns [{columns_str}] from {source} at {timestamp}"
+
+            daily = config._stored_market_data[symbol_key].get('daily_data', [])
+            config._data_coverage_warnings = check_coverage(daily, start_date, end_date)
+            if config._data_coverage_warnings:
+                info += (
+                    "\n⚠️ DATA COVERAGE WARNING — the backtest will run on less data "
+                    "than requested: " + "; ".join(config._data_coverage_warnings) +
+                    ". State this plainly in your report."
+                )
+
             print(info)
             return info
 

@@ -99,6 +99,9 @@ def _enrich(backtest_results: dict) -> dict:
     if period:
         enriched['backtest_period'] = period
 
+    if config._data_coverage_warnings:
+        enriched['data_coverage_warnings'] = config._data_coverage_warnings
+
     # Hand over pre-computed aggregates plus a representative slice of trades
     # rather than the full list. The statistics carry the analytical content,
     # so shipping every trade only inflates the prompt — and the response.

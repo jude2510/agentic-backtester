@@ -47,6 +47,7 @@ export interface AgentOutput {
   strategy_code?: string; // Generated Backtrader strategy Python code
   trades?: Trade[];
   trade_summary?: TradeSummary;
+  data_warnings?: string[]; // Gaps between the requested window and the data the backtest ran on
   versions?: {
     quant_agent: string;
     strategy_generator: string;

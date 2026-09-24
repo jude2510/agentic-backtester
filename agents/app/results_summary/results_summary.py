@@ -142,6 +142,17 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
             else:
                 period_block = ""
 
+            # The caller only sets this when the data returned fell short of the
+            # requested window. Without it the report describes a stale or
+            # truncated backtest as if it covered the period the user asked for.
+            coverage = backtest_results.get('data_coverage_warnings') or []
+            if coverage:
+                period_block += (
+                    "**Data Coverage Warning** (the backtest ran on less data than "
+                    "requested — say so in the executive summary): "
+                    + "; ".join(coverage) + "\n"
+                )
+
             if trade_summary:
                 summary_block = f"\nTrade Summary:\n{json.dumps(trade_summary, indent=2)}\n"
             else:

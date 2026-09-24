@@ -37,6 +37,7 @@ _generated_strategy_code = None
 _last_backtest_result = None  # Store last backtest result directly (trades, trade_summary)
 _results_summary_report = None  # Store the results_summary structured report (JSON string)
 _stored_market_data = {}
+_data_coverage_warnings = []  # Gaps between the requested window and the rows returned
 _actor_id = "Quant"
 _strategy_generator_version = "unknown"  # Track strategy generator version
 _results_summary_version = "unknown"  # Track results summary version

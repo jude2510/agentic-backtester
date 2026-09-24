@@ -85,6 +85,9 @@ function ResultsDisplayContent() {
           if (result.data.versions) {
             parsedResult.versions = result.data.versions;
           }
+          if (result.data.data_warnings?.length) {
+            parsedResult.data_warnings = result.data.data_warnings;
+          }
 
           // Override metrics with structured backtest_metrics if available
           if (result.data.backtest_metrics) {
@@ -334,6 +337,21 @@ function ResultsDisplayContent() {
             </span>
           </p>
         </div>
+
+        {/* Shown from the agent's coverage check, not the model's prose, so a
+            stale or short data window is flagged even if the narrative omits it. */}
+        {results.data_warnings && results.data_warnings.length > 0 && (
+          <div className="-mt-6 mb-10 rounded-lg border border-red-400/40 bg-red-400/5 px-5 py-3">
+            <p className="text-sm font-semibold text-red-300">
+              This backtest ran on less data than the window you chose.
+            </p>
+            <ul className="mt-1 list-disc pl-5 text-sm text-red-200/80">
+              {results.data_warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Performance Overview */}
         <motion.div
