@@ -16,7 +16,8 @@ Usage:
     # backfill everything in symbols.json (5 years, preserving deeper history)
     python ingest.py --years 5
 
-    # daily delta — re-fetch the last 7 days for every symbol
+    # daily delta — catch every symbol up from its last stored bar, so a run
+    # after missed days fills the gap rather than replacing history
     python ingest.py --delta
 
     # one symbol, explicit window, no writes
@@ -50,6 +51,23 @@ SYMBOLS_FILE = Path(__file__).parent / "symbols.json"
 OVERLAP_DAYS = 5
 
 
+def write_floor(existing_last: dt.date | None) -> dt.date | None:
+    """Earliest date a run may overwrite for a symbol; None means full replace.
+
+    Deliberately ignores the requested window. If the symbol has any stored
+    history, the write resumes just before its last stored bar — which both
+    preserves everything older and fills any gap left by missed runs. A
+    full-symbol replace only happens when there is nothing stored to lose.
+
+    The earlier rule only preserved history when it reached into the requested
+    window, so a --delta run after a gap longer than the delta window fell
+    through to a full replace and would have deleted every symbol's history.
+    """
+    if existing_last is None:
+        return None
+    return existing_last - dt.timedelta(days=OVERLAP_DAYS)
+
+
 def load_symbols() -> list[str]:
     if SYMBOLS_FILE.exists():
         return json.loads(SYMBOLS_FILE.read_text())["symbols"]
@@ -65,7 +83,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--years", type=int, default=5,
                    help="lookback when --start is omitted (default 5)")
     p.add_argument("--delta", action="store_true",
-                   help=f"only refresh the last {OVERLAP_DAYS * 2} days")
+                   help="catch each stored symbol up from its last bar "
+                        f"(a symbol not yet stored gets the last {OVERLAP_DAYS * 2} days)")
     p.add_argument("--replace-history", action="store_true",
                    help="DESTRUCTIVE: replace each symbol's entire history "
                         "instead of preserving rows older than the vendor window")
@@ -112,15 +131,13 @@ def main() -> int:
 
     for symbol in symbols:
         # Decide the write floor BEFORE fetching, so we only pull what we'll use.
-        since = None
+        existing_last = None
         if table is not None and not args.replace_history:
             existing_last = last_date_for(table, symbol)
-            if existing_last and existing_last >= requested_start:
-                # Stored history already reaches past our window start; preserve
-                # it and refresh only from just before the last stored bar.
-                since = existing_last - dt.timedelta(days=OVERLAP_DAYS)
-                print(f"🛡️  {symbol}: preserving rows before {since} "
-                      f"(stored through {existing_last})")
+        since = write_floor(existing_last)
+        if since:
+            print(f"🛡️  {symbol}: preserving rows before {since} "
+                  f"(stored through {existing_last})")
 
         fetch_start = since or requested_start
         series = provider.get_daily_bars(symbol, fetch_start, args.end)
