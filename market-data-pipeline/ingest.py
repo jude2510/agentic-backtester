@@ -74,7 +74,7 @@ def load_symbols() -> list[str]:
     return ["AMZN"]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--symbols", help="comma-separated (default: symbols.json)")
@@ -89,11 +89,11 @@ def parse_args() -> argparse.Namespace:
                    help="DESTRUCTIVE: replace each symbol's entire history "
                         "instead of preserving rows older than the vendor window")
     p.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
     symbols = ([s.strip().upper() for s in args.symbols.split(",")]
                if args.symbols else load_symbols())
@@ -177,6 +177,14 @@ def main() -> int:
         print("\n  These are not failures. The vendor silently returns a later")
         print("  start when a request predates the plan's history limit, so a")
         print("  backfill can look successful while holding less than requested.")
+
+    # Every stored symbol re-fetches an overlap of bars it already has, so a
+    # real run that writes nothing for a symbol means the provider returned
+    # nothing — a failure, and it must exit non-zero for the scheduler to see it.
+    empty = [r["symbol"] for r in results if not args.dry_run and not r.get("written")]
+    if empty:
+        print(f"\n❌ no rows written for: {', '.join(empty)}")
+        return 1
 
     return 0
 

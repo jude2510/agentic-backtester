@@ -16,6 +16,7 @@ atomic delete-then-insert. Consequences:
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 
 import boto3
 import pyarrow as pa
@@ -154,7 +155,11 @@ def write_symbol(table, series: BarSeries, since: dt.date | None = None) -> dict
         )
         mode = f"replace from {since}"
 
-    table.overwrite(arrow, overwrite_filter=row_filter)
+    # On a symbol's first write the delete half of delete-then-insert matches
+    # nothing and pyiceberg warns about it. Expected, and noise in scheduled logs.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Delete operation did not match any records")
+        table.overwrite(arrow, overwrite_filter=row_filter)
 
     return {
         "symbol": symbol,
