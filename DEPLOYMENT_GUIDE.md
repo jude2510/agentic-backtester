@@ -104,10 +104,10 @@ The three agents are a single [`@aws/agentcore`](https://github.com/aws/agentcor
 
 - **Code** lives in `agents/app/<agent>/`.
 - **Non-secret config** is in the `envVars` of each runtime in [`agents/agentcore/agentcore.json`](./agents/agentcore/agentcore.json). That covers model IDs, the Gateway URL, the Cognito domain and client ID, and the sub-agent ARNs.
-- **Secrets** go in `agents/agentcore/.env.local` (gitignored, injected at deploy). The only one is the Cognito client secret.
+- **The one secret**, the Cognito client secret, is currently supplied through a gitignored `agents/app/quant_agent/.env`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so that file is deployed with the code. This is a stopgap (see the note below).
 - **Memory IDs** are injected automatically as `MEMORY_<NAME>_ID`.
 
-> Keep configuration out of `.env` files inside `agents/app/<agent>/`. The CLI packages everything in that directory, and each agent calls `load_dotenv()`, so a local `.env` silently becomes part of the deployment.
+> `agents/agentcore/.env.local` is **not** injected into runtimes as environment variables. The CLI uses it for AgentCore Identity credential providers. The planned fix is an outbound OAuth credential provider, so the agent gets Gateway tokens from AgentCore Identity and never holds the secret. Until then, keep everything *except* that secret in `agentcore.json`: any other `.env` under `agents/app/` silently becomes deployed configuration.
 
 ### 4.1 Configure and deploy
 
@@ -115,7 +115,7 @@ Set the `quant_agent` `envVars` in `agentcore.json` from section 2: `AGENTCORE_G
 
 ```bash
 cd agents
-echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" >> agentcore/.env.local
+echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" > app/quant_agent/.env   # gitignored
 agentcore deploy -y
 agentcore status          # all three READY; note each runtime ARN
 ```

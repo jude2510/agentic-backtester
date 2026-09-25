@@ -8,7 +8,7 @@ The three agents behind the [Agentic Backtester](../README.md), managed as a sin
 | `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus 4.6 |
 | `results_summary` | Writes the performance report as a typed, validated schema | Claude Sonnet 4.6 |
 
-Model IDs are set per runtime in the `envVars` of `agentcore/agentcore.json`, not in `.env` files under `app/`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so a local `.env` there silently becomes deployed configuration.
+Model IDs and other non-secret config are set per runtime in the `envVars` of `agentcore/agentcore.json`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so any `.env` under `app/` silently becomes deployed configuration. The one deliberate exception, for now, is the Cognito client secret in `app/quant_agent/.env` (gitignored). Moving it to an AgentCore Identity credential provider is planned.
 
 See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) for the end-to-end deploy flow.
 
@@ -20,7 +20,7 @@ agents/
 ├── agentcore/
 │   ├── agentcore.json      # Project config: runtimes (+ envVars), memories
 │   ├── aws-targets.json    # Deployment target (account + region)
-│   ├── .env.local          # Secrets (gitignored) — the Cognito client secret
+│   ├── .env.local          # Credential-provider secrets (gitignored); not injected into runtimes
 │   ├── .llm-context/       # Type definitions for the JSON config
 │   └── cdk/                # Generated CDK (@aws/agentcore-cdk)
 └── app/                    # Agent source (one dir per agent, each with a pyproject.toml)
