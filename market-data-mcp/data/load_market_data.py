@@ -3,11 +3,15 @@
 load_market_data.py — load market data into the CDK-owned S3 Tables bucket.
 
 The table *bucket* (agentic-backtest-market-data) is created by the CDK
-DataStack. This script owns the Iceberg layer: it ensures the `daily_data`
-namespace + table exist and loads rows from a CSV.
+DataStack. This script creates the `daily_data` namespace + table and seeds it
+from a CSV.
 
-Idempotent: re-running performs a FULL RELOAD (overwrites all rows), so it's
-safe to run repeatedly. This is the seam the Phase 3 Polygon ingest replaces.
+ONE-TIME SEED ONLY. Ongoing data comes from market-data-pipeline/ingest.py.
+The CSV's value now is AMZN history back to 2000, deeper than the vendor plan
+serves; seed it into an empty table first, and the pipeline's backfill then
+preserves it and extends it forward. The script refuses to touch a table that
+already exists: it used to do a full-table overwrite on re-run, which against
+the live table would replace every symbol with this one CSV.
 
 Usage:
     AWS_PROFILE=personal AWS_REGION=us-east-1 python data/load_market_data.py
@@ -110,12 +114,13 @@ def main():
     except NamespaceAlreadyExistsError:
         print(f"↩️  Namespace already exists: {NAMESPACE}")
 
-    # Create table on first run; full-reload (overwrite) on subsequent runs.
     identifier = f"{NAMESPACE}.{TABLE_NAME}"
     try:
-        table = catalog.load_table(identifier)
-        print("♻️  Table exists — performing full reload (overwrite)")
-        table.overwrite(arrow_table)
+        catalog.load_table(identifier)
+        print(f"❌ {identifier} already exists — refusing to overwrite it.\n"
+              f"   This script only seeds an empty table. To update data, use\n"
+              f"   market-data-pipeline/ingest.py (it preserves existing history).")
+        sys.exit(1)
     except NoSuchTableError:
         print(f"🆕 Creating table: {identifier}")
         table = catalog.create_table(identifier, schema=ARROW_SCHEMA)
