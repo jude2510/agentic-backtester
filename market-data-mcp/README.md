@@ -7,8 +7,8 @@ The market-data service for the Agentic Backtester: an AWS Lambda that serves hi
 - **`lambda_function.py`** — Lambda handler; queries the Iceberg table and returns price bars
 - **`Dockerfile`** / **`.dockerignore`** — arm64 container image for the Lambda (built + pushed by the CDK app)
 - **`requirements.txt`** — Python dependencies (Lambda container + the local loader)
-- **`data/load_market_data.py`** — idempotent pyiceberg loader; creates the Iceberg table and loads `amzn.daily.csv` (full reload on every run, so it's safe to re-run)
-- **`data/amzn.daily.csv`** — sample dataset (AMZN daily bars)
+- **`data/load_market_data.py`** — one-time seed: creates the Iceberg table and loads `amzn.daily.csv`. Refuses to run if the table already exists; ongoing data comes from [`market-data-pipeline/`](../market-data-pipeline)
+- **`data/amzn.daily.csv`** — AMZN daily bars from 2000, deeper than the vendor plan serves
 - **`data/query_s3_table.py`** — helper to inspect the loaded table
 
 ## Interface
@@ -73,4 +73,4 @@ print(json.dumps(lambda_function.lambda_handler(
 
 ## Deployment
 
-The Lambda, S3 Tables bucket, Cognito, and AgentCore Gateway are provisioned by the **AWS CDK** app in [`infra/`](../infra) (stacks `agentic-backtest-data` and `agentic-backtest-backend`). Load the data with `data/load_market_data.py`. See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md).
+The Lambda, S3 Tables bucket, Cognito, and AgentCore Gateway are provisioned by the **AWS CDK** app in [`infra/`](../infra) (stacks `agentic-backtest-data` and `agentic-backtest-backend`). Data is loaded by the [ingest pipeline](../market-data-pipeline). See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md).

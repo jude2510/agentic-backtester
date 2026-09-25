@@ -1,66 +1,61 @@
 # Deployment Guide
 
-This guide deploys the Agentic Backtester end to end:
+This guide deploys the Agentic Backtester end to end into your own AWS account:
 
-1. **Backend infrastructure** — defined as Infrastructure-as-Code with **AWS CDK (Python)**: two stacks under the `agentic-backtest` prefix that provision the S3 Tables market-data store, the market-data Lambda, Cognito (machine-to-machine auth), and the AgentCore Gateway + Target (MCP). This replaces the original sample's imperative shell scripts.
-2. **Agents** — three Pydantic AI agents deployed to AgentCore Runtime as a single `@aws/agentcore` CLI project.
-3. **Frontend** — a Next.js app run locally against the orchestrator.
+1. **Backend infrastructure**: AWS CDK stacks for the market-data store, the market-data Lambda, Cognito and the AgentCore Gateway.
+2. **Market data**: loaded from the Massive API by the ingest pipeline.
+3. **Agents**: three Pydantic AI agents on AgentCore Runtime, deployed as one `@aws/agentcore` CLI project.
+4. **Hosting**: quota counters, the job worker and a budget alarm (CDK), plus the Next.js app on Amplify Hosting.
+5. **Scheduled ingest**: keeps the market data current (CDK).
+
+Section 6 covers running the frontend locally against the deployed backend.
 
 ## Table of Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [Backend infrastructure (AWS CDK)](#2-backend-infrastructure-aws-cdk)
-   - [2.1 Bootstrap & deploy the stacks](#21-bootstrap--deploy-the-stacks)
-   - [2.2 Load market data](#22-load-market-data)
-3. [Agents (AgentCore Runtime)](#3-agents-agentcore-runtime)
-   - [3.1 Point the config at your backend](#31-point-the-config-at-your-backend)
-   - [3.2 Deploy](#32-deploy)
-4. [Frontend (Next.js)](#4-frontend-nextjs)
+2. [Backend infrastructure](#2-backend-infrastructure)
+3. [Market data](#3-market-data)
+4. [Agents](#4-agents)
+5. [Hosting](#5-hosting)
+6. [Scheduled ingest](#6-scheduled-ingest)
+7. [Local frontend development](#7-local-frontend-development)
+8. [Teardown](#teardown)
 
 ---
 
 ## 1. Prerequisites
 
-- **AWS CLI** configured with credentials (e.g. `export AWS_PROFILE=<profile> AWS_REGION=us-east-1`)
+- **AWS CLI** with credentials (`export AWS_PROFILE=<profile> AWS_REGION=us-east-1`)
 - **AWS CDK v2** (`npm install -g aws-cdk`) and **Node.js 20+**
-- **Docker** (or **colima**) running — CDK builds the Lambda container image locally
+- **Docker** (or colima) running. CDK builds three Lambda container images locally.
 - **Python 3.11+**
-- **`agentcore` CLI** — the AWS AgentCore CLI (`npm install -g @aws/agentcore`), plus **[uv](https://docs.astral.sh/uv/)** on the path (it builds each agent's Python package)
-- **`jq`** for JSON processing
+- **`agentcore` CLI** (`npm install -g @aws/agentcore`) and **[uv](https://docs.astral.sh/uv/)** on the path
+- **A [Massive](https://massive.com) API key**. The Stocks Starter plan (5 years of daily history) is enough.
+- Amazon Bedrock model access to Claude Opus 4.6 and Claude Sonnet 4.6 in your region
 
-Your AWS credentials need permissions for: CloudFormation, S3 Tables, Lambda, ECR, IAM, Cognito, and Bedrock AgentCore.
-
----
-
-## 2. Backend infrastructure (AWS CDK)
-
-The [`infra/`](./infra) directory is a CDK app with two stacks:
-
-- **`agentic-backtest-data`** (DataStack) — the S3 Tables *table bucket* `agentic-backtest-market-data` (the durable data container). The Iceberg table/schema/rows are loaded separately (see 2.2), because Iceberg table management is pyiceberg's job, not CloudFormation's.
-- **`agentic-backtest-backend`** (BackendStack) — the market-data Lambda (arm64 container image), Cognito (user pool + domain + M2M client), and the AgentCore Gateway + Target that exposes the Lambda as an MCP tool.
-
-### 2.1 Bootstrap & deploy the stacks
+All CDK commands run from `infra/` with its virtualenv active, since `cdk.json` runs `python3 app.py`:
 
 ```bash
 cd infra
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cdk bootstrap aws://<ACCOUNT_ID>/us-east-1        # once per account/region
+```
 
-# One-time per account/region:
-cdk bootstrap aws://<ACCOUNT_ID>/us-east-1
+The account ID and region are set in [`infra/app.py`](./infra/app.py). Change them there for your account.
 
-# Deploy both stacks (Docker/colima must be running for the Lambda image build):
+---
+
+## 2. Backend infrastructure
+
+```bash
 cdk deploy agentic-backtest-data agentic-backtest-backend
 ```
 
-> Keep the `.venv` activated whenever you run `cdk` — `cdk.json` invokes `python3 app.py`, which needs `aws-cdk-lib` on the path.
+- **`agentic-backtest-data`** creates the S3 Tables table bucket `agentic-backtest-market-data` (retained on delete).
+- **`agentic-backtest-backend`** creates the market-data Lambda, a Cognito user pool with a machine-to-machine client, and the AgentCore Gateway that exposes the Lambda as an MCP tool.
 
-Note the stack outputs (printed on deploy, or via `aws cloudformation describe-stacks`):
-
-- **`GatewayUrl`** — the MCP endpoint is this URL **+ `/mcp`** (the `GatewayMcpUrl` output gives it directly)
-- **`CognitoDomain`**, **`CognitoClientId`**, **`CognitoUserPoolId`**
-
-The Cognito **client secret** is intentionally *not* a CloudFormation output. Fetch it when you need it:
+Note the outputs `GatewayUrl` (the MCP endpoint is this URL **plus `/mcp`**), `CognitoDomain` and `CognitoClientId`. The client secret is deliberately not an output:
 
 ```bash
 aws cognito-idp describe-user-pool-client \
@@ -68,77 +63,157 @@ aws cognito-idp describe-user-pool-client \
   --query 'UserPoolClient.ClientSecret' --output text
 ```
 
-### 2.2 Load market data
+---
 
-CDK creates the table *bucket*; this idempotent pyiceberg loader creates the `daily_data` table and loads rows. It performs a **full reload** on every run, so it's safe to re-run.
+## 3. Market data
+
+The pipeline in [`market-data-pipeline/`](./market-data-pipeline) creates the Iceberg table if needed and loads daily bars for the symbols in `symbols.json`. Every write is a filtered overwrite scoped to one symbol, so any run can be repeated safely.
 
 ```bash
-cd market-data-mcp
-python3 -m venv .venv && source .venv/bin/activate      # separate from the CDK venv
+cd market-data-pipeline
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python data/load_market_data.py                          # loads data/amzn.daily.csv → agentic-backtest-market-data
+export MASSIVE_API_KEY=<your key>
+
+python ingest.py --years 5 --dry-run     # preview: what would be written, per symbol
+python ingest.py --years 5               # backfill
 ```
 
-Verify the Lambda can read the bucket end to end:
+**Optional: deeper AMZN history.** The repo includes AMZN daily bars back to 2000 in `market-data-mcp/data/amzn.daily.csv`. To keep them, seed them **before** the backfill, into the empty table:
+
+```bash
+cd market-data-mcp && pip install -r requirements.txt
+python data/load_market_data.py          # refuses to run if the table already exists
+```
+
+The backfill then preserves those rows and extends AMZN to the present.
+
+Check that the agent's read path serves the data:
 
 ```bash
 aws lambda invoke --function-name agentic-backtest-market-data \
-  --payload '{"symbol":"AMZN","limit":5}' --cli-binary-format raw-in-base64-out out.json
-jq '.body | fromjson | .metadata' out.json   # expect success:true, total_rows:5
+  --cli-binary-format raw-in-base64-out --payload '{"symbol":"SPY","limit":1}' out.json
+cat out.json        # body.data[0].date should be the latest trading day
 ```
 
 ---
 
-## 3. Agents (AgentCore Runtime)
+## 4. Agents
 
-All three agents — Strategy Generator, Result Summarizer, and the Quant Agent orchestrator — form a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project under [`agents/`](./agents). The CLI provisions every runtime, memory, and IAM role via one CloudFormation stack (`AgentCore-agenticbacktester-default`).
+The three agents are a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project in [`agents/`](./agents), deployed as one CloudFormation stack (`AgentCore-agenticbacktester-default`).
 
-- **Source** lives in `app/<agent>/`, each with a `pyproject.toml` build spec.
-- **Non-secret config** (model id, gateway URL, Cognito domain/client id, the sub-agent ARNs) is committed per-runtime under `envVars` in [`agentcore/agentcore.json`](./agents/agentcore/agentcore.json).
-- **Secrets** go in `agentcore/.env.local` (gitignored, injected at deploy). The only one required is the Cognito client secret.
-- **Memory ids** are injected automatically as `MEMORY_<NAME>_ID` — no manual wiring.
+- **Code** lives in `agents/app/<agent>/`.
+- **Non-secret config** is in the `envVars` of each runtime in [`agents/agentcore/agentcore.json`](./agents/agentcore/agentcore.json). That covers model IDs, the Gateway URL, the Cognito domain and client ID, and the sub-agent ARNs.
+- **Secrets** go in `agents/agentcore/.env.local` (gitignored, injected at deploy). The only one is the Cognito client secret.
+- **Memory IDs** are injected automatically as `MEMORY_<NAME>_ID`.
 
-### 3.1 Point the config at your backend
+> Keep configuration out of `.env` files inside `agents/app/<agent>/`. The CLI packages everything in that directory, and each agent calls `load_dotenv()`, so a local `.env` silently becomes part of the deployment.
 
-After the CDK stacks are up (section 2), update the `quant_agent` runtime's `envVars` in `agentcore/agentcore.json` to match your stack outputs — `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`), `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID` — then put the client secret in `.env.local`:
+### 4.1 Configure and deploy
+
+Set the `quant_agent` `envVars` in `agentcore.json` from section 2: `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`), `COGNITO_DOMAIN` and `COGNITO_CLIENT_ID`. Then:
 
 ```bash
 cd agents
 echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" >> agentcore/.env.local
+agentcore deploy -y
+agentcore status          # all three READY; note each runtime ARN
 ```
 
-### 3.2 Deploy
+On a first deploy, the sub-agent ARNs don't exist yet. Once they do, put them in the `quant_agent` `envVars` (`STRATEGY_GENERATOR_RUNTIME_ARN`, `BACKTEST_SUMMARY_RUNTIME_ARN`) and run `agentcore deploy -y` again.
+
+### 4.2 Let the Quant Agent call its sub-agents
+
+The CLI's execution role for `quant_agent` does **not** include permission to invoke the other two runtimes. Without it, the sub-agent calls fail with AccessDenied, and the orchestrator quietly writes the strategy itself instead, so the results look plausible but are wrong. Add the grant yourself:
 
 ```bash
-agentcore deploy -y      # builds + deploys all three runtimes
-agentcore status         # confirm each runtime is READY; note the quant_agent ARN
+QUANT_ROLE=$(aws bedrock-agentcore-control get-agent-runtime \
+  --agent-runtime-id <quant_agent runtime id> --query roleArn --output text | cut -d/ -f2)
+
+aws iam put-role-policy --role-name "$QUANT_ROLE" --policy-name QuantAgentInvokeSubAgents \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "InvokeSubAgents",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime",
+      "Resource": [
+        "<strategy_generator runtime ARN>", "<strategy_generator runtime ARN>/*",
+        "<results_summary runtime ARN>",    "<results_summary runtime ARN>/*"
+      ]
+    }]
+  }'
 ```
 
-The `quant_agent` Runtime ARN from `agentcore status` is what the frontend needs (section 4).
-
-> **Auth note:** the Quant Agent authenticates to the Gateway with the Cognito **client-credentials** grant (client id + secret → bearer JWT); the Gateway validates it against the Cognito pool's OIDC discovery URL. It reaches the two sub-agents via a `bedrock-agentcore:InvokeAgentRuntime` grant on its execution role.
+The inline policy survives later `agentcore deploy` runs.
 
 ---
 
-## 4. Frontend (Next.js)
+## 5. Hosting
+
+### 5.1 Guardrails and the job worker
+
+```bash
+cd infra && source .venv/bin/activate
+export AGENTCORE_ARN=<quant_agent runtime ARN>
+export BUDGET_ALERT_EMAIL=<you@example.com>
+cdk deploy agentic-backtest-hosting
+```
+
+This creates the quota counters and job table (DynamoDB), the worker Lambda that runs each backtest and chat turn, the IAM role Amplify's server-side code runs as, and a $25/month AWS Budget. The budget alerts at 50/80/100% of **gross** usage, so promotional credits can't hide spend. Confirm the SNS subscription email it sends.
+
+> Set `BUDGET_ALERT_EMAIL` every time you deploy this stack (or `agentic-backtest-pipeline`). Deploying without it removes the email subscription.
+
+Usage limits (15 backtests a day, 110 a month) are set in [`infra/infra/hosting_stack.py`](./infra/infra/hosting_stack.py) and [`frontend/lib/quota.ts`](./frontend/lib/quota.ts).
+
+### 5.2 Amplify Hosting
+
+In the Amplify console:
+
+1. **Create new app**, choose GitHub, and authorize the Amplify GitHub App for your repository and the `main` branch.
+2. Tick **"My app is a monorepo"** and set the app root to **`frontend`**. Do **not** tick "My monorepo uses Amplify Gen2 Backend": this repo has no Amplify backend, and that option makes the build fail.
+3. Keep the detected Next.js build settings (`npm run build`, output `.next`). Amplify deploys it as SSR (`WEB_COMPUTE`).
+4. Under **App settings → IAM roles**, set the **compute role** to the `AmplifySSRComputeRoleArn` output from 5.1. The server-side routes use that role, so no access keys are stored anywhere.
+
+No environment variables are required: the table and worker names default to the deployed names. Every push to `main` then rebuilds the site.
+
+---
+
+## 6. Scheduled ingest
+
+The `agentic-backtest-pipeline` stack runs `ingest.py --delta` at 02:00 UTC Tuesday to Saturday (after the US close all year round). It then reads every symbol back through the market-data Lambda and fails if any is more than five days old. It alarms on failure, and on three days without a run.
+
+The Massive key goes in an SSM SecureString, which CloudFormation can't create. `$MASSIVE_API_KEY` is expanded by the shell, so the key doesn't end up in your shell history:
+
+```bash
+aws ssm put-parameter --name /agentic-backtest/massive-api-key \
+  --type SecureString --value "$MASSIVE_API_KEY"
+
+cd infra && source .venv/bin/activate
+export BUDGET_ALERT_EMAIL=<you@example.com>
+cdk deploy agentic-backtest-pipeline      # then confirm the SNS subscription email
+```
+
+Test it once. The first run is a cold start and takes about 90 seconds, which is longer than the AWS CLI's 60-second default, so raise the timeout or the CLI will retry and start a second run:
+
+```bash
+aws lambda invoke --function-name agentic-backtest-ingest \
+  --cli-read-timeout 300 out.json && cat out.json      # latest date per symbol
+```
+
+---
+
+## 7. Local frontend development
+
+The local app uses the deployed quota table, job table and worker, with your own credentials:
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local
-# In .env.local set:
-#   AGENTCORE_ARN=<Quant Agent Runtime ARN from 3.3>
-#   AWS_REGION=us-east-1
-#   NEXT_PUBLIC_APP_VERSION=1.0.0
-export AWS_PROFILE=<profile>   # the server-side API routes invoke the agent via the AWS SDK
-npm run dev                    # http://localhost:3000
+cp .env.example .env.local        # set QUOTA_ENFORCED=false to skip the caps locally
+export AWS_PROFILE=<profile>
+npm run dev                       # http://localhost:3000
 ```
-
-### Test
-
-1. Open `http://localhost:3000`.
-2. Submit a strategy (e.g. *EMA 5/20 crossover on AMZN, 1 year*) and confirm a performance report renders.
-3. Ask the chat *"list my last 3 backtests"* to confirm the memory path.
 
 ---
 
@@ -146,15 +221,9 @@ npm run dev                    # http://localhost:3000
 
 ```bash
 cd infra && source .venv/bin/activate
-cdk destroy agentic-backtest-backend agentic-backtest-data
+cdk destroy agentic-backtest-pipeline agentic-backtest-hosting agentic-backtest-backend agentic-backtest-data
+aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default    # the three agents
+aws ssm delete-parameter --name /agentic-backtest/massive-api-key
 ```
 
-The data bucket has a `RETAIN` removal policy, so `cdk destroy` leaves `agentic-backtest-market-data` intact; delete it manually with `aws s3tables delete-table-bucket` if you also want the data gone. The three agents are a single CloudFormation stack — remove them by running `agentcore destroy` from `agents/`, or with `aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default`.
-
----
-
-## Support and Resources
-
-- **Amazon Bedrock AgentCore:** https://docs.aws.amazon.com/bedrock/latest/userguide/agents.html
-- **AWS CDK (Python):** https://docs.aws.amazon.com/cdk/v2/guide/work-with-cdk-python.html
-- **Docker:** https://docs.docker.com/get-docker/ · **colima:** https://github.com/abiosoft/colima
+Then delete the Amplify app in the console. The data bucket is retained on purpose. Delete it with `aws s3tables delete-table-bucket` if you want the data gone too.

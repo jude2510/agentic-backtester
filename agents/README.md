@@ -4,9 +4,11 @@ The three agents behind the [Agentic Backtester](../README.md), managed as a sin
 
 | Agent (`app/`) | Role | Model |
 | --- | --- | --- |
-| `quant_agent` | Orchestrator — coordinates the other two plus the market-data and backtest tools; holds chat memory | Claude Sonnet |
-| `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus |
-| `results_summary` | Writes the human-readable performance report | Amazon Nova |
+| `quant_agent` | Orchestrator — coordinates the other two plus the market-data and backtest tools; holds chat memory | Claude Sonnet 4.6 |
+| `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus 4.6 |
+| `results_summary` | Writes the performance report as a typed, validated schema | Claude Sonnet 4.6 |
+
+Model IDs are set per runtime in the `envVars` of `agentcore/agentcore.json`, not in `.env` files under `app/`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so a local `.env` there silently becomes deployed configuration.
 
 See the repo [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) for the end-to-end deploy flow.
 
