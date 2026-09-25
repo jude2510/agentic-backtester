@@ -19,7 +19,10 @@
         "enableOtel": true
       },
       "protocol": "HTTP",
-      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d"
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d",
+      "envVars": [
+        { "name": "STRATEGY_GENERATOR_MODEL_ID", "value": "us.anthropic.claude-opus-4-6-v1" }
+      ]
     },
     {
       "name": "results_summary",
