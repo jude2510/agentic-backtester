@@ -12,7 +12,9 @@ A backtest takes a minute or more, but Amplify's server-side rendering cuts off 
 
 Chat (`/api/chat`) works the same way. Quota enforcement is in [`lib/quota.ts`](./lib/quota.ts): atomic DynamoDB counters, which fail closed if the table can't be reached.
 
-- **`app/page.tsx`**: strategy form. It offers only the symbols and windows the stored data covers, per the coverage table in `types/strategy.ts`, which is kept in step with `market-data-pipeline/symbols.json` by hand.
+- **`app/page.tsx`**: strategy form. It offers only the symbols and backtest windows the stored data covers, read from `/api/coverage`.
+- **`app/api/coverage`**: each symbol's stored date range, which the ingest pipeline publishes to SSM after every run
+- **`app/api/health`**: data freshness and remaining capacity, live on every request (200 healthy, 503 degraded), with no model calls
 - **`app/results/`**: metrics, trades, the report, and warnings when the data fell short of the requested window
 - **`app/chat/`**: questions about past backtests
 - **`components/Disclaimer.tsx`**: the site-wide "not financial advice" footer

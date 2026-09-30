@@ -190,7 +190,7 @@ No environment variables are required: the table and worker names default to the
 
 ## 6. Scheduled ingest
 
-The `agentic-backtest-pipeline` stack runs `ingest.py --delta` at 02:00 UTC Tuesday to Saturday (after the US close all year round). It then reads every symbol back through the market-data Lambda and fails if any is more than five days old. It alarms on failure, and on three days without a run.
+The `agentic-backtest-pipeline` stack runs `ingest.py --delta` at 02:00 UTC Tuesday to Saturday (after the US close all year round). It then reads every symbol back through the market-data Lambda and fails if any is more than five days old. Finally, it publishes each symbol's stored date range to the SSM parameter `/agentic-backtest/market-data-coverage`, which the site reads to decide which backtest windows to offer and to report freshness at `/api/health`. It alarms on failure, and on three days without a run.
 
 The Massive key goes in an SSM SecureString, which CloudFormation can't create. `$MASSIVE_API_KEY` is expanded by the shell, so the key doesn't end up in your shell history:
 
@@ -209,6 +209,8 @@ Test it once. The first run is a cold start and takes about 90 seconds, which is
 aws lambda invoke --function-name agentic-backtest-ingest \
   --cli-read-timeout 300 out.json && cat out.json      # latest date per symbol
 ```
+
+That first run also creates the coverage parameter. Until it exists, `/api/health` reports `degraded` and the form uses built-in date ranges.
 
 ---
 
