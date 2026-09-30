@@ -33,8 +33,15 @@
             "memoryArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:memory/quant_agent_mem-kDK1FM7lnj"
           }
         },
+        "credentials": {
+          "gateway-cognito": {
+            "credentialProviderArn": "arn:aws:bedrock-agentcore:us-east-1:765607525378:token-vault/default/oauth2credentialprovider/gateway-cognito",
+            "clientSecretArn": "arn:aws:secretsmanager:us-east-1:765607525378:secret:bedrock-agentcore-identity!default/oauth2/gateway-cognito-563d68fe-hHjLEC",
+            "callbackUrl": "https://bedrock-agentcore.us-east-1.amazonaws.com/identities/oauth2/callback/1544d30a-4af6-44db-bad3-85f4300e177a"
+          }
+        },
         "stackName": "AgentCore-agenticbacktester-default",
-        "deployHash": "e0504da2fd2c8995"
+        "deployHash": "85627987716b89a3"
       }
     }
   }
