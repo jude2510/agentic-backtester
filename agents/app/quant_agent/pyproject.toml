@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "quant_agent"
 version = "0.1.0"
-description = "Quant Agent orchestrator (Pydantic AI/Claude Sonnet) — coordinates strategy generation, market data, backtest, and results summary"
+description = "Quant Agent — the backtest pipeline (strategy generation, market data, backtest, results summary) and a Pydantic AI chat over past runs"
 requires-python = ">=3.10"
 dependencies = [
     "aws-opentelemetry-distro",

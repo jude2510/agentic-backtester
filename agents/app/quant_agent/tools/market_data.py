@@ -6,8 +6,7 @@ token from AgentCore Identity
 
 import os
 import json
-import time
-from datetime import date, datetime
+from datetime import date
 from typing import Dict, Any, List, Tuple
 import httpx
 import config
@@ -103,43 +102,6 @@ def parse_gateway_rows(gateway_response: Dict[str, Any]) -> Tuple[Dict[str, Any]
     ]
     print(f"📊 Found {len(bars)} data points for {metadata.get('symbol', 'UNKNOWN')}")
     return metadata, bars
-
-
-def extract_market_data_from_gateway_response(gateway_response: Dict[str, Any]) -> Dict[str, Any]:
-    """Legacy orchestrator path: the parsed rows as a symbol -> daily data
-    mapping, or an 'UNKNOWN' placeholder carrying the error."""
-    try:
-        metadata, transformed_data = parse_gateway_rows(gateway_response)
-        if not transformed_data:
-            raise ValueError("No market data found in response")
-
-        symbol = metadata.get('symbol', 'UNKNOWN')
-        return {
-            symbol: {
-                'daily_data': transformed_data,
-                'metadata': {
-                    'symbol': symbol,
-                    'total_rows': metadata.get('total_rows', len(transformed_data)),
-                    'columns': metadata.get('columns', []),
-                    'source': 'agentcore_gateway',
-                    'timestamp': datetime.now().isoformat()
-                }
-            }
-        }
-
-    except Exception as e:
-        print(f"❌ Error extracting market data from gateway response: {e}")
-        return {
-            'UNKNOWN': {
-                'daily_data': [],
-                'metadata': {
-                    'symbol': 'UNKNOWN',
-                    'total_rows': 0,
-                    'source': 'extraction_error',
-                    'error': str(e)
-                }
-            }
-        }
 
 
 # Gateway auth comes from AgentCore Identity, so this runtime never holds the
@@ -315,72 +277,3 @@ def fetch_market_data(symbol: str, start_date: str, end_date: str, limit: int) -
     bars.sort(key=lambda bar: bar['date'])
     warnings = check_coverage(bars, start_date, end_date) if bars else []
     return MarketData(symbol=symbol.upper(), bars=bars, warnings=warnings)
-
-
-def fetch_market_data_via_gateway(symbol: str, start_date: str = None, end_date: str = None, limit: int = 252) -> Dict[str, Any]:
-    """
-    Fetch market data via AgentCore Gateway MCP with Cognito authentication.
-    This tool waits synchronously for completion before returning.
-
-    Args:
-        symbol: Stock symbol to get tick data for. Examples: AAPL, MSFT, GOOGL, NVDA, JNJ, PFE, JPM, BAC, XOM, CVX
-        start_date: Start date for data retrieval in format YYYY-MM-DD (e.g., 2024-01-15). Use 01 for January, not 1. Use 01 for single digit days, not 1.
-        end_date: End date for data retrieval in format YYYY-MM-DD (e.g., 2024-12-31). Use 01 for January, not 1. Use 01 for single digit days, not 1.
-        limit: Maximum number of data points to return (default: 252)
-
-    Returns:
-        Market data from external service via Gateway
-    """
-    if not symbol:
-        print(f"🌐 AgentCore Gateway: No symbol specified, using AMZN...")
-        symbol = "AMZN"
-
-    print(f"🌐 AgentCore Gateway: Fetching {symbol} data via MCP (start: {start_date}, end: {end_date}, limit: {limit})...")
-
-    start_time = time.time()
-
-    # Clear first: the runtime container is reused across requests, so a failed
-    # fetch must not leave the previous request's data for run_backtest to use.
-    config._stored_market_data = {}
-    config._data_coverage_warnings = []
-
-    try:
-        # Call synchronous function directly with date range parameters
-        gateway_response = call_gateway_market_data_with_cognito(symbol, start_date, end_date, limit)
-
-        # Extract structured data from gateway response
-        config._stored_market_data = extract_market_data_from_gateway_response(gateway_response)
-
-        processing_time = time.time() - start_time
-        print(f"⏱️ Market data fetch completed in {processing_time:.2f} seconds")
-        time.sleep(0.5)  # Brief pause to ensure completion
-
-        # Extract metadata for detailed success message
-        symbol_key = list(config._stored_market_data.keys())[0] if config._stored_market_data else symbol
-        if symbol_key in config._stored_market_data:
-            metadata = config._stored_market_data[symbol_key].get('metadata', {})
-            total_rows = metadata.get('total_rows', 0)
-            columns = metadata.get('columns', [])
-            source = metadata.get('source', 'unknown')
-            timestamp = metadata.get('timestamp', 'unknown')
-
-            columns_str = ', '.join(columns)
-            info = f"✅ Market data fetch successfully for {symbol_key} to have {total_rows} total_rows with columns [{columns_str}] from {source} at {timestamp}"
-
-            daily = config._stored_market_data[symbol_key].get('daily_data', [])
-            config._data_coverage_warnings = check_coverage(daily, start_date, end_date)
-            if config._data_coverage_warnings:
-                info += (
-                    "\n⚠️ DATA COVERAGE WARNING — the backtest will run on less data "
-                    "than requested: " + "; ".join(config._data_coverage_warnings) +
-                    ". State this plainly in your report."
-                )
-
-            print(info)
-            return info
-
-    except Exception as e:
-        processing_time = time.time() - start_time
-        print(f"❌ AgentCore Gateway: Failed to fetch via Gateway after {processing_time:.2f} seconds - {str(e)}")
-
-    return "Failed to get market data"

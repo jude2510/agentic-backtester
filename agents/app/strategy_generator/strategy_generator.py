@@ -7,6 +7,7 @@ Built with Pydantic AI (agent + Bedrock model) hosted on Amazon Bedrock AgentCor
 
 import json
 import os
+import re
 from typing import Dict, Any, Union
 from datetime import datetime
 from pydantic_ai import Agent
@@ -74,6 +75,18 @@ def get_past_strategies(symbol: str = None) -> list:
     except Exception as e:
         print(f"⚠️ Failed to retrieve memory: {e}")
         return []
+
+
+def _class_name(name: str) -> str:
+    """A valid Python class name for the strategy: letters and digits from its
+    display name, ending in "Strategy" exactly once. Stripping only spaces made
+    "My Trading Strategy" into MyTradingStrategyStrategy, and a name with
+    punctuation into an invalid identifier."""
+    base = re.sub(r"[^0-9A-Za-z]", "", name or "")
+    base = re.sub(r"(?i)strategy$", "", base)
+    if not base or base[0].isdigit():
+        base = "Custom" + base
+    return f"{base}Strategy"
 
 
 class StrategyGeneratorAgent:
@@ -144,7 +157,7 @@ Generate a complete Backtrader strategy class from this JSON configuration:
 {json.dumps(config, indent=2)}
 
 Requirements:
-1. Class name: {config['name'].replace(' ', '')}Strategy
+1. Class name: {_class_name(config['name'])}
 2. Stock symbol: {config['stock_symbol']}
 3. Position sizing: buy ~95% of available cash on each entry using
    `size = int(self.broker.getcash() * 0.95 / self.data.close[0])`, and only buy when size > 0.

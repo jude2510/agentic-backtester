@@ -35,19 +35,10 @@ _agentcore_runtime_client = None
 _memory_client = None
 _memory_id = None
 _session_id = None
-_quant_agent = None
-_chat_agent = None  # Chat mode agent for analyzing historical backtests
+_chat_agent = None  # Chat mode agent for analyzing historical backtests, built on first use
 _region_name = None
-_generated_strategy_code = None
-_last_backtest_result = None  # Store last backtest result directly (trades, trade_summary)
-_results_summary_report = None  # Store the results_summary structured report (JSON string)
-_stored_market_data = {}
-_data_coverage_warnings = []  # Gaps between the requested window and the rows returned
 _workload_access_token = None  # This request's AgentCore Identity token; never logged
-_position_pct = None  # User's position size (% of cash) for this request; None = backtest default
 _actor_id = "Quant"
-_strategy_generator_version = "unknown"  # Track strategy generator version
-_results_summary_version = "unknown"  # Track results summary version
 
 
 def get_memory_id_by_name(name_prefix: str = "quant_agent") -> str:
@@ -123,64 +114,6 @@ def save_backtest_results_to_memory_sync(results: Dict[str, Any], strategy_code:
         print(f"❌ Failed to save backtest results to AgentCore Memory: {e}")
         import traceback
         traceback.print_exc()
-
-
-def get_backtest_results_from_memory(symbol: str = None) -> Dict[str, Any]:
-    """Retrieve backtest results from AgentCore Memory using list_events"""
-    global _memory_client, _memory_id, _session_id
-    try:
-        # List events using memory_client
-        events = _memory_client.list_events(
-            memory_id=_memory_id,
-            actor_id=_actor_id,
-            session_id=_session_id
-        )
-
-        # Find the most recent backtest results message
-        latest_result = None
-
-        # Handle both list and dict response formats
-        if isinstance(events, dict):
-            events_list = events.get('events', [])
-        elif isinstance(events, list):
-            events_list = events
-        else:
-            events_list = []
-
-        for event in reversed(events_list):  # Start from most recent
-            try:
-                # Get messages from event
-                messages = event.get('messages', [])
-                for msg in messages:
-                    content = msg.get('content', '') if isinstance(msg, dict) else str(msg)
-
-                    if 'Backtest result:' in content:
-                        # Check if this is for the requested symbol (if specified)
-                        if symbol is None or f'"symbol": "{symbol.upper()}"' in content:
-                            # Extract JSON data from the message content
-                            if ':' in content:
-                                json_part = content.split(':', 1)[1].strip()
-                                latest_result = json.loads(json_part)
-                                break
-            except Exception as e:
-                print(f"⚠️ Error parsing event: {e}")
-                continue
-
-            if latest_result:
-                break
-
-        if latest_result:
-            print(f"✅ Found backtest results in AgentCore Memory")
-            return latest_result
-        else:
-            print(f"❌ No backtest results found in AgentCore Memory")
-            return None
-
-    except Exception as e:
-        print(f"❌ Failed to retrieve backtest results from AgentCore Memory: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 
 def initialize_clients():

@@ -256,12 +256,17 @@ def _describe_market(market: MarketData) -> tuple:
 
 
 def _describe_backtest(result: dict) -> tuple:
-    trades = (result.get("trade_summary") or {}).get("total_trades", 0)
+    # Closed and still-open trades counted apart, the way the results page's
+    # transaction log shows them.
+    summary = result.get("trade_summary") or {}
+    closed, still_open = summary.get("total_closed", 0), summary.get("total_open", 0)
     total_return = result.get("total_return")
     returned = f"{total_return:+.2f}%" if isinstance(total_return, (int, float)) else "n/a"
-    if not trades:
+    if not closed and not still_open:
         return "empty", f"no trades: the entry conditions never triggered in this window · {returned}"
-    return "ok", f"{trades} trade{'' if trades == 1 else 's'} · {returned} return"
+    trades = [f"{closed} closed trade{'' if closed == 1 else 's'}" if closed else "",
+              f"{still_open} still open" if still_open else ""]
+    return "ok", f"{' + '.join(t for t in trades if t)} · {returned} return"
 
 
 def _describe_summary(summary: SummaryReport) -> tuple:

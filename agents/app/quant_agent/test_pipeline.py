@@ -41,7 +41,7 @@ def ok_fetch(symbol, start, end, limit):
 def ok_backtest(code, market, position_pct):
     return {"initial_value": 100000.0, "final_value": 112000.0, "total_return": 12.0,
             "metrics": {"Sharpe Ratio": 1.1}, "trades": [{"pnl": 12000.0}],
-            "trade_summary": {"total_trades": 1, "won": 1}}
+            "trade_summary": {"total_trades": 1, "total_closed": 1, "total_open": 0, "won": 1}}
 
 
 def ok_summarize(result, market):
@@ -168,7 +168,8 @@ def main() -> int:
     check("timeout: reported as timeout", final_statuses(events)["fetch_market_data"] == "timeout")
 
     # 6. No trades: a real result, so the analysis still runs.
-    zero = {**ok_backtest(None, None, None), "trades": [], "trade_summary": {"total_trades": 0}}
+    zero = {**ok_backtest(None, None, None), "trades": [],
+            "trade_summary": {"total_trades": 0, "total_closed": 0, "total_open": 0}}
     steps, calls = make_steps(backtest=lambda *a: zero)
     events = run(steps)
     invariants("no trades", events)
@@ -176,6 +177,16 @@ def main() -> int:
           final_statuses(events)["run_backtest"] == "empty"
           and "summarize" in [c[0] for c in calls] and events[-1]["status"] == "complete",
           final_statuses(events))
+
+    # A position still open at the end is counted apart from closed trades,
+    # as the transaction log shows it (live NVDA run: 9 closed + 1 open).
+    open_at_end = {**ok_backtest(None, None, None),
+                   "trade_summary": {"total_trades": 10, "total_closed": 9, "total_open": 1}}
+    steps, _ = make_steps(backtest=lambda *a: open_at_end)
+    events = run(steps)
+    check("open position: reported as closed + still open",
+          details(events)["run_backtest"].startswith("9 closed trades + 1 still open"),
+          details(events)["run_backtest"])
 
     # 7. Summary fails: the numbers still stand.
     steps, _ = make_steps(summarize=raises(StepError("the results summary agent call failed")))
