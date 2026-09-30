@@ -1,4 +1,6 @@
 # Pinned rather than relying on the Lambda runtime's bundled boto3, which lags
 # behind and may not know about bedrock-agentcore.
-boto3>=1.40.0
-botocore>=1.40.0
+# 1.43.72 is the version verified to send runtimeUserId (as the
+# X-Amzn-Bedrock-AgentCore-Runtime-User-Id header) on InvokeAgentRuntime.
+boto3>=1.43.72
+botocore>=1.43.72

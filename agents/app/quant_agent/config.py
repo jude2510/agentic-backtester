@@ -20,8 +20,7 @@ print("🔧 Environment Variables Loaded:")
 print(f"   Version: {VERSION}")
 print(f"   AGENTCORE_GATEWAY_URL: {os.getenv('AGENTCORE_GATEWAY_URL', 'Not set')}")
 print(f"   STRATEGY_GENERATOR_RUNTIME_ARN: {os.getenv('STRATEGY_GENERATOR_RUNTIME_ARN', 'Not set')}")
-print(f"   COGNITO_DOMAIN: {os.getenv('COGNITO_DOMAIN', 'Not set')}")
-print(f"   COGNITO_CLIENT_ID: {os.getenv('COGNITO_CLIENT_ID', 'Not set')}")
+print(f"   GATEWAY_CREDENTIAL_PROVIDER: {os.getenv('GATEWAY_CREDENTIAL_PROVIDER', 'Not set')}")
 print(f"   AWS_REGION: {os.getenv('AWS_REGION', 'us-east-1')}")
 
 # Lazy initialization globals
@@ -38,6 +37,7 @@ _last_backtest_result = None  # Store last backtest result directly (trades, tra
 _results_summary_report = None  # Store the results_summary structured report (JSON string)
 _stored_market_data = {}
 _data_coverage_warnings = []  # Gaps between the requested window and the rows returned
+_workload_access_token = None  # This request's AgentCore Identity token; never logged
 _actor_id = "Quant"
 _strategy_generator_version = "unknown"  # Track strategy generator version
 _results_summary_version = "unknown"  # Track results summary version

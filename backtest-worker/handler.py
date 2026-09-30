@@ -35,6 +35,12 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 # Jobs are transient UI state; a day is far longer than any poll needs.
 JOB_TTL_SECONDS = 24 * 60 * 60
 
+# The agent gets its Gateway credentials from AgentCore Identity, which needs a
+# workload access token, and the runtime only issues one when the caller names
+# a user. AWS treats that value as unverified, so it is this service's own fixed
+# identity and never anything taken from the request.
+RUNTIME_USER_ID = "backtest-worker"
+
 _dynamodb = boto3.resource("dynamodb", region_name=REGION)
 _table = _dynamodb.Table(JOBS_TABLE)
 
@@ -123,6 +129,7 @@ def handler(event, context):
             runtimeSessionId=job_id.replace("-", "") + "0" * 8,  # >=33 chars
             payload=json.dumps(agent_payload).encode("utf-8"),
             qualifier="DEFAULT",
+            runtimeUserId=RUNTIME_USER_ID,
         )
 
         raw = response["response"].read().decode("utf-8")

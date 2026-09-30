@@ -45,6 +45,9 @@ class HostingStack(Stack):
                  agentcore_arn: str | None = None, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        if not agentcore_arn:
+            raise ValueError("HostingStack needs agentcore_arn (the quant agent runtime ARN)")
+
         # --- Quota counters -------------------------------------------------
         # One item per counter window, e.g.
         #   global#month#2026-08          global#day#2026-08-23
@@ -97,8 +100,7 @@ class HostingStack(Stack):
             memory_size=512,
             environment={
                 "JOBS_TABLE_NAME": jobs_table.table_name,
-                # Falls back to the known runtime; overridable at deploy time.
-                "AGENTCORE_ARN": agentcore_arn or "",
+                "AGENTCORE_ARN": agentcore_arn,
             },
         )
 
@@ -117,10 +119,19 @@ class HostingStack(Stack):
         )
 
         jobs_table.grant_read_write_data(worker)
+
+        # The quant agent only. InvokeAgentRuntimeForUser lets the worker pass
+        # runtimeUserId, which is what makes the runtime issue the workload
+        # access token the agent needs to get Gateway credentials from AgentCore
+        # Identity. AWS treats that user id as unverified, so this permission
+        # belongs to this role alone and only on this runtime.
         worker.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["bedrock-agentcore:InvokeAgentRuntime"],
-                resources=["*"],  # scoped by the single ARN in env
+                actions=[
+                    "bedrock-agentcore:InvokeAgentRuntime",
+                    "bedrock-agentcore:InvokeAgentRuntimeForUser",
+                ],
+                resources=[agentcore_arn, f"{agentcore_arn}/*"],
             )
         )
 
@@ -133,11 +144,10 @@ class HostingStack(Stack):
         # than long-lived access keys sitting in environment variables.
         #
         # Scoped to what the routes actually do: increment quota counters, read
-        # and write job rows, kick the worker, and — for the chat and history
-        # routes, which are single synchronous model calls rather than the full
-        # backtest pipeline — invoke the quant agent directly. Those two routes
-        # are metered by the chat quota for exactly this reason: any path that
-        # reaches a model is a path that spends money.
+        # and write job rows, and kick the worker. The routes never call the
+        # agent themselves — every model call goes through the worker — so this
+        # role has no AgentCore permissions at all, and a bug in a public route
+        # cannot reach a model except through the quota-checked worker path.
         ssr_role = iam.Role(
             self, "AmplifySSRComputeRole",
             role_name="agentic-backtest-amplify-ssr",
@@ -147,14 +157,6 @@ class HostingStack(Stack):
         quota_table.grant_read_write_data(ssr_role)
         jobs_table.grant_read_write_data(ssr_role)
         worker.grant_invoke(ssr_role)
-
-        if agentcore_arn:
-            ssr_role.add_to_policy(
-                iam.PolicyStatement(
-                    actions=["bedrock-agentcore:InvokeAgentRuntime"],
-                    resources=[agentcore_arn, f"{agentcore_arn}/*"],
-                )
-            )
 
         self.ssr_role = ssr_role
 

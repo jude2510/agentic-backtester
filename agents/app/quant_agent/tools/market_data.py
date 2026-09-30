@@ -1,14 +1,12 @@
 """
 Market Data Tool
-Fetches historical market data via AgentCore Gateway with Cognito authentication
+Fetches historical market data via AgentCore Gateway, authenticated with a
+token from AgentCore Identity
 """
 
 import os
 import json
 import time
-import base64
-import urllib.request
-import urllib.parse
 from datetime import date, datetime
 from typing import Dict, Any, List
 import httpx
@@ -162,42 +160,48 @@ def extract_market_data_from_gateway_response(gateway_response: Dict[str, Any]) 
         }
 
 
-def authenticate_with_cognito() -> str:
-    """Authenticate with Cognito using client_credentials flow and return access token"""
-    try:
-        client_id = os.getenv('COGNITO_CLIENT_ID')
-        client_secret = os.getenv('COGNITO_CLIENT_SECRET')
-        cognito_domain = os.getenv('COGNITO_DOMAIN')
-        region = config._region_name
+# Gateway auth comes from AgentCore Identity, so this runtime never holds the
+# Cognito client secret. The credential provider (agentcore.json `credentials`)
+# keeps the secret in Secrets Manager and does the client-credentials exchange
+# itself; the agent only ever sees short-lived access tokens.
+GATEWAY_CREDENTIAL_PROVIDER = os.getenv('GATEWAY_CREDENTIAL_PROVIDER')
+GATEWAY_SCOPES = ['agentic-backtest/invoke']
 
-        if not all([client_id, client_secret, cognito_domain]):
-            raise ValueError(
-                "Missing Cognito configuration. "
-                "Please set COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET, and COGNITO_DOMAIN in .env"
-            )
+_identity_fetch = None
 
-        # Token endpoint
-        token_url = f"https://{cognito_domain}.auth.{region}.amazoncognito.com/oauth2/token"
 
-        # client_credentials flow: Basic auth with client_id:client_secret
-        credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-        data = urllib.parse.urlencode({
-            'grant_type': 'client_credentials',
-        }).encode()
+def get_gateway_token() -> str:
+    """Fetch a Gateway bearer token from AgentCore Identity (M2M)."""
+    global _identity_fetch
+    from bedrock_agentcore.identity.auth import requires_access_token
+    from bedrock_agentcore.runtime import BedrockAgentCoreContext
 
-        req = urllib.request.Request(token_url, data=data, method='POST')
-        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        req.add_header('Authorization', f'Basic {credentials}')
+    if not GATEWAY_CREDENTIAL_PROVIDER:
+        raise RuntimeError("GATEWAY_CREDENTIAL_PROVIDER is not set")
 
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read().decode())
+    # Checked explicitly: with no workload access token the SDK does not fail
+    # cleanly, it falls into its local-dev path and creates a new workload
+    # identity. The runtime only issues one when the caller passes
+    # runtimeUserId, which the backtest worker does. Re-applied from the
+    # entrypoint in case the context variable did not follow the tool onto
+    # this thread.
+    if BedrockAgentCoreContext.get_workload_access_token() is None:
+        if config._workload_access_token is None:
+            raise RuntimeError(
+                "no workload access token was delivered with this request "
+                "(the caller must pass runtimeUserId)")
+        BedrockAgentCoreContext.set_workload_access_token(config._workload_access_token)
 
-        access_token = result['access_token']
-        return access_token
+    if _identity_fetch is None:
+        @requires_access_token(provider_name=GATEWAY_CREDENTIAL_PROVIDER,
+                               scopes=GATEWAY_SCOPES, auth_flow='M2M')
+        def fetch(*, access_token: str) -> str:
+            return access_token
+        _identity_fetch = fetch
 
-    except Exception as e:
-        print(f"❌ Cognito authentication failed: {e}")
-        raise
+    token = _identity_fetch()
+    print(f"🔐 Gateway token from AgentCore Identity ({GATEWAY_CREDENTIAL_PROVIDER})")
+    return token
 
 
 def call_gateway_market_data_with_cognito(symbol: str, start_date: str = None, end_date: str = None, limit: int = 252) -> Dict[str, Any]:
@@ -208,8 +212,7 @@ def call_gateway_market_data_with_cognito(symbol: str, start_date: str = None, e
 
         print(f"🌐 Calling AgentCore Gateway: {gateway_url}")
 
-        # Authenticate with Cognito (now synchronous)
-        access_token = authenticate_with_cognito()
+        access_token = get_gateway_token()
 
         # Build arguments with optional date range
         arguments = {

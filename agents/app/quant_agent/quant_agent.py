@@ -12,6 +12,7 @@ import datetime as dt
 from typing import Literal
 from pydantic import BaseModel, Field
 from bedrock_agentcore import BedrockAgentCoreApp
+from bedrock_agentcore.runtime import BedrockAgentCoreContext
 import config
 from tools import (
     fetch_market_data_via_gateway,
@@ -214,6 +215,13 @@ def invoke(payload, context=None):
         config._results_summary_report = None
         config._stored_market_data = {}
         config._data_coverage_warnings = []
+
+        # The runtime delivers this request's workload access token in request
+        # context. Captured here and re-applied in the market-data tool, rather
+        # than trusting the context variable to survive into the thread Pydantic
+        # AI runs tools on. Presence only is logged, never the token.
+        config._workload_access_token = BedrockAgentCoreContext.get_workload_access_token()
+        print(f"🪪 Workload access token in request context: {config._workload_access_token is not None}")
 
         # Prepend resolved dates so the model never has to guess "today".
         dated_prompt = f"{_date_reference()}\n{payload.get('prompt')}"

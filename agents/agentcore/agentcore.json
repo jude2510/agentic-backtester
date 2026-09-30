@@ -14,15 +14,18 @@
       "entrypoint": "strategy_generator.py",
       "codeLocation": "app/strategy_generator",
       "runtimeVersion": "PYTHON_3_11",
+      "envVars": [
+        {
+          "name": "STRATEGY_GENERATOR_MODEL_ID",
+          "value": "us.anthropic.claude-opus-4-6-v1"
+        }
+      ],
       "networkMode": "PUBLIC",
       "instrumentation": {
         "enableOtel": true
       },
       "protocol": "HTTP",
-      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d",
-      "envVars": [
-        { "name": "STRATEGY_GENERATOR_MODEL_ID", "value": "us.anthropic.claude-opus-4-6-v1" }
-      ]
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-ea2fbeaa7d"
     },
     {
       "name": "results_summary",
@@ -43,20 +46,34 @@
       "entrypoint": "quant_agent.py",
       "codeLocation": "app/quant_agent",
       "runtimeVersion": "PYTHON_3_11",
+      "envVars": [
+        {
+          "name": "QUANT_AGENT_MODEL_ID",
+          "value": "us.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "name": "AGENTCORE_GATEWAY_URL",
+          "value": "https://agentic-backtest-gateway-vgehrqpmfa.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+        },
+        {
+          "name": "STRATEGY_GENERATOR_RUNTIME_ARN",
+          "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/strategy_generator-QGs4Yn35vR"
+        },
+        {
+          "name": "BACKTEST_SUMMARY_RUNTIME_ARN",
+          "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/results_summary-nfF458BlWR"
+        },
+        {
+          "name": "GATEWAY_CREDENTIAL_PROVIDER",
+          "value": "gateway-cognito"
+        }
+      ],
       "networkMode": "PUBLIC",
       "instrumentation": {
         "enableOtel": true
       },
       "protocol": "HTTP",
-      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-a6f76213c2",
-      "envVars": [
-        { "name": "QUANT_AGENT_MODEL_ID", "value": "us.anthropic.claude-sonnet-4-6" },
-        { "name": "AGENTCORE_GATEWAY_URL", "value": "https://agentic-backtest-gateway-vgehrqpmfa.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp" },
-        { "name": "COGNITO_DOMAIN", "value": "agentic-backtest-mcp" },
-        { "name": "COGNITO_CLIENT_ID", "value": "1jvbk18pbe7ofhjnehdcaqfjvd" },
-        { "name": "STRATEGY_GENERATOR_RUNTIME_ARN", "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/strategy_generator-QGs4Yn35vR" },
-        { "name": "BACKTEST_SUMMARY_RUNTIME_ARN", "value": "arn:aws:bedrock-agentcore:us-east-1:765607525378:runtime/results_summary-nfF458BlWR" }
-      ]
+      "executionRoleArn": "arn:aws:iam::765607525378:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-a6f76213c2"
     }
   ],
   "memories": [
@@ -77,7 +94,17 @@
     }
   ],
   "knowledgeBases": [],
-  "credentials": [],
+  "credentials": [
+    {
+      "authorizerType": "OAuthCredentialProvider",
+      "name": "gateway-cognito",
+      "discoveryUrl": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_s73UrJpEg/.well-known/openid-configuration",
+      "scopes": [
+        "agentic-backtest/invoke"
+      ],
+      "vendor": "CustomOauth2"
+    }
+  ],
   "evaluators": [],
   "onlineEvalConfigs": [],
   "agentCoreGateways": [],
