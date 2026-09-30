@@ -103,22 +103,31 @@ cat out.json        # body.data[0].date should be the latest trading day
 The three agents are a single [`@aws/agentcore`](https://github.com/aws/agentcore-cli) project in [`agents/`](./agents), deployed as one CloudFormation stack (`AgentCore-agenticbacktester-default`).
 
 - **Code** lives in `agents/app/<agent>/`.
-- **Non-secret config** is in the `envVars` of each runtime in [`agents/agentcore/agentcore.json`](./agents/agentcore/agentcore.json). That covers model IDs, the Gateway URL, the Cognito domain and client ID, and the sub-agent ARNs.
-- **The one secret**, the Cognito client secret, is currently supplied through a gitignored `agents/app/quant_agent/.env`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so that file is deployed with the code. This is a stopgap (see the note below).
+- **Config** is in the `envVars` of each runtime in [`agents/agentcore/agentcore.json`](./agents/agentcore/agentcore.json). That covers model IDs, the Gateway URL, the credential provider name and the sub-agent ARNs.
+- **No agent holds a secret.** The Quant Agent gets its Gateway tokens from an AgentCore Identity OAuth credential provider (`gateway-cognito`), which keeps the Cognito client secret in Secrets Manager and does the client-credentials exchange itself. The agent only ever sees short-lived access tokens.
 - **Memory IDs** are injected automatically as `MEMORY_<NAME>_ID`.
 
-> `agents/agentcore/.env.local` is **not** injected into runtimes as environment variables. The CLI uses it for AgentCore Identity credential providers. The planned fix is an outbound OAuth credential provider, so the agent gets Gateway tokens from AgentCore Identity and never holds the secret. Until then, keep everything *except* that secret in `agentcore.json`: any other `.env` under `agents/app/` silently becomes deployed configuration.
+> Don't put `.env` files under `agents/app/<agent>/`. The CLI packages everything in an agent's directory and each agent calls `load_dotenv()`, so a local `.env` silently becomes part of the deployment.
 
 ### 4.1 Configure and deploy
 
-Set the `quant_agent` `envVars` in `agentcore.json` from section 2: `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`), `COGNITO_DOMAIN` and `COGNITO_CLIENT_ID`. Then:
+Set `AGENTCORE_GATEWAY_URL` (`<GatewayUrl>/mcp`) in the `quant_agent` `envVars`, then create the credential provider from the Cognito client in section 2:
 
 ```bash
 cd agents
-echo "COGNITO_CLIENT_SECRET=<from describe-user-pool-client>" > app/quant_agent/.env   # gitignored
-agentcore deploy -y
+CLIENT_SECRET=<from describe-user-pool-client>      # a shell variable, so it stays out of history
+agentcore add credential --type oauth --name gateway-cognito \
+  --discovery-url "https://cognito-idp.us-east-1.amazonaws.com/<CognitoUserPoolId>/.well-known/openid-configuration" \
+  --client-id <CognitoClientId> --client-secret "$CLIENT_SECRET" --scopes agentic-backtest/invoke
+unset CLIENT_SECRET
+
+agentcore deploy -y       # also creates the provider in AgentCore Identity
 agentcore status          # all three READY; note each runtime ARN
 ```
+
+The CLI stores the client secret in `agentcore/.env.local` (gitignored), **encrypted**. The key lives in your macOS Keychain (or `~/.agentcore/secrets.key`), so on another machine you re-run `agentcore add credential`.
+
+The agent can only use Identity when the runtime gives it a *workload access token*, and for IAM-signed callers the runtime only does that when the call includes a user ID. The backtest worker passes a fixed `runtimeUserId`, and the hosting stack grants it `bedrock-agentcore:InvokeAgentRuntimeForUser` on this runtime only (section 5.1).
 
 On a first deploy, the sub-agent ARNs don't exist yet. Once they do, put them in the `quant_agent` `envVars` (`STRATEGY_GENERATOR_RUNTIME_ARN`, `BACKTEST_SUMMARY_RUNTIME_ARN`) and run `agentcore deploy -y` again.
 
@@ -160,7 +169,7 @@ export BUDGET_ALERT_EMAIL=<you@example.com>
 cdk deploy agentic-backtest-hosting
 ```
 
-This creates the quota counters and job table (DynamoDB), the worker Lambda that runs each backtest and chat turn, the IAM role Amplify's server-side code runs as, and a $25/month AWS Budget. The budget alerts at 50/80/100% of **gross** usage, so promotional credits can't hide spend. Confirm the SNS subscription email it sends.
+This creates the quota counters and job table (DynamoDB), the worker Lambda that runs each backtest and chat turn, the IAM role Amplify's server-side code runs as, and a $25/month AWS Budget. Only the worker can invoke the Quant Agent, including the `InvokeAgentRuntimeForUser` permission from section 4.1, and only that one runtime. The Amplify role has no AgentCore permissions at all. The budget alerts at 50/80/100% of **gross** usage, so promotional credits can't hide spend. Confirm the SNS subscription email it sends.
 
 > Set `BUDGET_ALERT_EMAIL` every time you deploy this stack (or `agentic-backtest-pipeline`). Deploying without it removes the email subscription.
 
