@@ -111,7 +111,14 @@ export async function GET(request: NextRequest) {
     const status = Item.status === 'queued' ? 'processing' : Item.status;
 
     return NextResponse.json(
-      { status, data: Item.data, error: Item.error, startTime: Item.startTime },
+      {
+        status,
+        steps: Item.steps ?? [],
+        failedStep: Item.failedStep,
+        data: Item.data,
+        error: Item.error,
+        startTime: Item.startTime,
+      },
       { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
     );
   } catch (error: any) {

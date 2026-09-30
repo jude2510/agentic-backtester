@@ -10,17 +10,25 @@ export interface StrategyInput {
   sell_conditions: string;
 }
 
-// AgentCore response from API route
-export interface AgentCoreResponse {
-  success: boolean;
-  analysis: string;
-  raw_response?: any;
-  session_id?: string;
-  error?: string;
-  error_type?: string;
+// The backtest pipeline's steps, in the order the agent runs them.
+export const STEP_ORDER = [
+  'prepare', 'generate_strategy', 'fetch_market_data', 'run_backtest', 'summarize'
+] as const;
+export type StepName = typeof STEP_ORDER[number];
+
+// ok: produced what the next step needs. empty: ran correctly and found
+// nothing. skipped: an earlier step stopped the run.
+export type StepStatus = 'running' | 'ok' | 'empty' | 'failed' | 'timeout' | 'skipped';
+
+// A step's latest status, as the worker records it on the job.
+export interface PipelineStep {
+  step: StepName;
+  status: StepStatus;
+  detail?: string | null;
+  duration_ms?: number | null;
 }
 
-// Agent output format (parsed from AgentCore response)
+// What the results page renders, built from the job's structured data.
 export interface AgentOutput {
   initial_investment: string;
   final_portfolio_value: string;
@@ -43,15 +51,15 @@ export interface AgentOutput {
     mediumPriority?: string[];
     considerTesting?: string[];
   };
-  analysis_text?: string; // Full markdown analysis from agent
   strategy_code?: string; // Generated Backtrader strategy Python code
   trades?: Trade[];
   trade_summary?: TradeSummary;
   data_warnings?: string[]; // Gaps between the requested window and the data the backtest ran on
+  data_period?: { start: string; end: string; trading_days: number }; // What the data actually covered
   versions?: {
-    quant_agent: string;
-    strategy_generator: string;
-    results_summary: string;
+    quant_agent?: string;
+    strategy_generator?: string;
+    results_summary?: string; // absent when the analysis step failed
   };
 }
 

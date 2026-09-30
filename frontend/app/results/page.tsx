@@ -6,263 +6,111 @@ import { motion } from 'framer-motion';
 import GlassCard from '@/components/ui/GlassCard';
 import AnimatedButton from '@/components/ui/AnimatedButton';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { AgentOutput, Trade, TradeSummary } from '@/types/strategy';
+import PipelineProgress, { STEP_LABELS } from '@/components/PipelineProgress';
+import { AgentOutput, PipelineStep, StepName, StrategyInput, Trade } from '@/types/strategy';
 import { FRONTEND_VERSION } from '@/lib/version';
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
-// Convert decimal ratios (e.g. 0.5, -0.12) to percentage strings (e.g. "50.00%", "-12.00%")
-// Already-formatted strings with "%" are returned as-is; "N/A" passes through unchanged.
-function formatAsPercent(value: string | number | undefined): string {
-  if (value === undefined || value === null) return 'N/A';
-  const str = String(value).trim();
-  if (str === 'N/A' || str === '') return 'N/A';
-  if (str.includes('%')) return str;
-  const num = parseFloat(str);
-  if (isNaN(num)) return str;
-  // Absolute value < 10 → treat as decimal ratio (0.5 → 50%, 1.5 → 150%)
-  if (Math.abs(num) < 10) {
-    return `${(num * 100).toFixed(2)}%`;
-  }
-  return `${num.toFixed(2)}%`;
+// A backtest usually finishes in about a minute; the worker's own limit is
+// ten, so a job still running after that is not coming back.
+const POLL_INTERVAL_MS = 2000;
+const POLL_DEADLINE_MS = 10 * 60 * 1000;
+
+/** The results page's view of the job's structured data. */
+function toOutput(data: any): AgentOutput {
+  const strategy: Partial<StrategyInput> = data.strategyInput || {};
+  const m = data.backtest_metrics || {};
+  const metrics = m.metrics || {};
+  const report = data.summary_report || {};
+  const cents = (v: number) => String(Math.round(v * 100) / 100);
+  const sharpe = metrics['Sharpe Ratio'];
+
+  return {
+    initial_investment: m.initial_value != null ? String(m.initial_value) : 'N/A',
+    final_portfolio_value: m.final_value != null ? cents(m.final_value) : 'N/A',
+    total_return: m.total_return != null ? `${m.total_return.toFixed(2)}%` : 'N/A',
+    maximum_drawdown: metrics['Max Drawdown'] || 'N/A',
+    profit_loss: m.final_value != null && m.initial_value != null
+      ? cents(m.final_value - m.initial_value) : 'N/A',
+    sharpe_ratio: sharpe != null && sharpe !== 'N/A' ? String(sharpe) : 'N/A',
+    symbol: strategy.stock_symbol || '',
+    strategy_type: strategy.name || '',
+    stop_loss: `${strategy.stop_loss}%`,
+    take_profit: `${strategy.take_profit}%`,
+    position_pct: strategy.position_pct ?? 95,
+    buy_conditions: strategy.buy_conditions || '',
+    sell_conditions: strategy.sell_conditions || '',
+    backtest_window: strategy.backtest_window || '',
+    executive_summary: report.executiveSummary,
+    detailed_analysis: report.detailedAnalysis,
+    concerns_and_recommendations: report.concernsAndRecommendations,
+    strategy_code: data.strategyCode || undefined,
+    trades: data.trades || [],
+    trade_summary: data.trade_summary,
+    data_warnings: data.data_warnings || [],
+    data_period: data.data_period || undefined,
+    versions: data.versions,
+  };
 }
 
 function ResultsDisplayContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [results, setResults] = useState<AgentOutput | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<PipelineStep[]>([]);
+  const [startTime, setStartTime] = useState<number | undefined>();
+  const [failure, setFailure] = useState<{ message: string; step?: StepName } | null>(null);
 
   useEffect(() => {
     const jobId = searchParams.get('jobId');
-    const strategyParam = searchParams.get('strategy');
-
-    if (!jobId || !strategyParam) {
-      setError('Missing job information');
-      setLoading(false);
+    if (!jobId) {
+      setFailure({ message: 'Missing job information.' });
       return;
     }
 
-    let strategy;
-    try {
-      strategy = JSON.parse(strategyParam);
-    } catch (err) {
-      setError('Invalid strategy data');
-      setLoading(false);
-      return;
-    }
+    let cancelled = false;
+    const deadline = Date.now() + POLL_DEADLINE_MS;
 
-    // Start polling for results
-    pollForResults(jobId, strategy);
+    const poll = async () => {
+      while (!cancelled && Date.now() < deadline) {
+        try {
+          const response = await fetch(
+            `${BASE_PATH}/api/execute-backtest-async?jobId=${jobId}`, { cache: 'no-store' });
+          const job = await response.json();
+          if (cancelled) return;
+
+          if (response.status === 404) {
+            setFailure({ message: job.error || 'This backtest could not be found.' });
+            return;
+          }
+          if (job.steps) setSteps(job.steps);
+          if (job.startTime) setStartTime(job.startTime);
+
+          if (job.status === 'complete') {
+            setResults(toOutput(job.data));
+            return;
+          }
+          if (job.status === 'error') {
+            setFailure({ message: job.error || 'The backtest failed.', step: job.failedStep });
+            return;
+          }
+        } catch (err) {
+          // A dropped poll is not a failed backtest; the next one retries.
+          console.error('[Results] polling error:', err);
+        }
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+      if (!cancelled) {
+        setFailure({ message: "This backtest didn't finish within 10 minutes. Please try again." });
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+    };
   }, [searchParams]);
-
-  const pollForResults = async (jobId: string, strategy: any) => {
-    const maxAttempts = 60; // 5 minutes max
-    const pollInterval = 15000; // 5 seconds
-
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        console.log(`[Results] 🔄 Polling attempt ${i + 1}/${maxAttempts} for job ${jobId}`);
-
-        const response = await fetch(`${BASE_PATH}/api/execute-backtest-async?jobId=${jobId}`);
-        const result = await response.json();
-
-        console.log('[Results] Poll result status:', result.status);
-
-        if (result.status === 'complete') {
-          console.log('[Results] ✅ Backtest complete!');
-          const parsedResult = parseAgentResponse(result.data.analysis, strategy);
-          if (result.data.strategyCode) {
-            parsedResult.strategy_code = result.data.strategyCode;
-          }
-          if (result.data.trades) {
-            parsedResult.trades = result.data.trades;
-          }
-          if (result.data.trade_summary) {
-            parsedResult.trade_summary = result.data.trade_summary;
-          }
-          if (result.data.versions) {
-            parsedResult.versions = result.data.versions;
-          }
-          if (result.data.data_warnings?.length) {
-            parsedResult.data_warnings = result.data.data_warnings;
-          }
-
-          // Override metrics with structured backtest_metrics if available
-          if (result.data.backtest_metrics) {
-            const m = result.data.backtest_metrics;
-            console.log('[Results] Using structured backtest metrics:', m);
-            if (m.initial_value) parsedResult.initial_investment = String(m.initial_value);
-            if (m.final_value) parsedResult.final_portfolio_value = String(Math.round(m.final_value * 100) / 100);
-            if (m.total_return != null) parsedResult.total_return = `${m.total_return.toFixed(2)}%`;
-            if (m.metrics) {
-              if (m.metrics['Sharpe Ratio'] != null && m.metrics['Sharpe Ratio'] !== 'N/A') {
-                parsedResult.sharpe_ratio = String(m.metrics['Sharpe Ratio']);
-              }
-              if (m.metrics['Max Drawdown']) {
-                parsedResult.maximum_drawdown = m.metrics['Max Drawdown'];
-              }
-            }
-            if (m.final_value && m.initial_value) {
-              parsedResult.profit_loss = String(Math.round((m.final_value - m.initial_value) * 100) / 100);
-            }
-          }
-
-          // Prefer the results_summary structured report (typed output) for the
-          // analysis prose — robust vs. parsing it out of the agent's free text.
-          if (result.data.summary_report) {
-            const r = result.data.summary_report;
-            console.log('[Results] Using structured summary_report');
-            if (r.executiveSummary) parsedResult.executive_summary = r.executiveSummary;
-            if (r.detailedAnalysis) parsedResult.detailed_analysis = r.detailedAnalysis;
-            if (r.concernsAndRecommendations) parsedResult.concerns_and_recommendations = r.concernsAndRecommendations;
-          }
-
-          setResults(parsedResult);
-          setLoading(false);
-          return;
-        }
-
-        if (result.status === 'error') {
-          console.log('[Results] ❌ Backtest failed:', result.error);
-          setError(result.error || 'Backtest failed');
-          setLoading(false);
-          return;
-        }
-
-        // Still processing, wait and continue
-        if (i < maxAttempts - 1) {
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-        }
-
-      } catch (pollError) {
-        console.error('[Results] Polling error:', pollError);
-        // Continue polling on network errors
-      }
-    }
-
-    // Timeout
-    console.log('[Results] ⏰ Polling timeout');
-    setError('Backtest timed out after 5 minutes');
-    setLoading(false);
-  };
-
-  const parseAgentResponse = (analysisText: string, strategy: any): AgentOutput => {
-    try {
-      // Try multiple strategies to extract JSON from the LLM response
-      let jsonData;
-
-      // Strategy 1: Extract from ```json ... ``` markdown code block (greedy to get the largest block)
-      const jsonMatch = analysisText.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        try {
-          jsonData = JSON.parse(jsonMatch[1].trim());
-        } catch {
-          // First code block might be malformed, try the next strategies
-        }
-      }
-
-      // Strategy 2: Try parsing the entire text as JSON
-      if (!jsonData) {
-        try {
-          jsonData = JSON.parse(analysisText.trim());
-        } catch {
-          // Not pure JSON, continue to next strategy
-        }
-      }
-
-      // Strategy 3: Find the largest JSON object containing "backtestResult"
-      if (!jsonData) {
-        const braceMatch = analysisText.match(/\{[\s\S]*"backtestResult"[\s\S]*\}/);
-        if (braceMatch) {
-          try {
-            jsonData = JSON.parse(braceMatch[0]);
-          } catch {
-            // Brace matching captured invalid JSON
-          }
-        }
-      }
-
-      if (!jsonData) {
-        throw new Error('Could not extract JSON from agent response');
-      }
-
-      // Extract data from the new JSON format
-      const backtestResult = jsonData.backtestResult || {};
-
-      return {
-        initial_investment: backtestResult.initialCapital || '100000',
-        final_portfolio_value: backtestResult.finalPortfolioValue || 'N/A',
-        total_return: formatAsPercent(backtestResult.totalReturn) || 'N/A',
-        maximum_drawdown: formatAsPercent(backtestResult.maxDrawdown) || 'N/A',
-        symbol: backtestResult.symbolTraded || strategy.stock_symbol,
-        strategy_type: backtestResult.strategyName || strategy.name,
-        stop_loss: `${strategy.stop_loss}%`,
-        take_profit: `${strategy.take_profit}%`,
-        position_pct: strategy.position_pct,
-        buy_conditions: strategy.buy_conditions || '',
-        sell_conditions: strategy.sell_conditions || '',
-        backtest_window: strategy.backtest_window || '',
-        profit_loss: backtestResult.profitLoss || 'N/A',
-        sharpe_ratio: backtestResult.sharpe_ratio || backtestResult.SharpeRatio || 'N/A',
-        executive_summary: jsonData.executiveSummary || '',
-        detailed_analysis: jsonData.detailedAnalysis || '',
-        concerns_and_recommendations: jsonData.concernsAndRecommendations || {},
-        analysis_text: analysisText,
-        trades: jsonData.trades || [],
-        trade_summary: jsonData.trade_summary || jsonData.tradeSummary || undefined
-      };
-    } catch (error) {
-      console.error('[Results] Failed to parse JSON response, falling back to regex:', error);
-
-      // Fallback to regex parsing for backward compatibility
-      const extractMetric = (patterns: RegExp[]): string => {
-        for (const pattern of patterns) {
-          const match = analysisText.match(pattern);
-          if (match) {
-            return match[1].trim().replace(/\*\*/g, '').replace(/,/g, '');
-          }
-        }
-        return 'N/A';
-      };
-
-      const initialCapital = extractMetric([
-        /Initial Investment[:\s*]+\$?([\d,]+)/i,
-        /Initial Capital[:\s*]+\$?([\d,]+)/i,
-      ]) || '100000';
-
-      const finalValue = extractMetric([
-        /Final Value[:\s*]+\$?([\d,]+\.?\d*)/i,
-        /Final Portfolio Value[:\s*]+\$?([\d,]+\.?\d*)/i,
-      ]);
-
-      const totalReturn = extractMetric([
-        /Total Return[:\s*]+([+-]?[\d.]+%)/i,
-      ]);
-
-      const maxDrawdown = extractMetric([
-        /Maximum Drawdown[:\s*]+([\d.]+%)/i,
-        /Max Drawdown[:\s*]+([\d.]+%)/i,
-      ]);
-
-      return {
-        initial_investment: initialCapital,
-        final_portfolio_value: finalValue,
-        total_return: totalReturn,
-        maximum_drawdown: maxDrawdown,
-        symbol: strategy.stock_symbol,
-        strategy_type: strategy.name,
-        stop_loss: `${strategy.stop_loss}%`,
-        take_profit: `${strategy.take_profit}%`,
-        position_pct: strategy.position_pct,
-        buy_conditions: strategy.buy_conditions || '',
-        sell_conditions: strategy.sell_conditions || '',
-        backtest_window: strategy.backtest_window || '',
-        analysis_text: analysisText
-      };
-    }
-  };
 
   const handleNewStrategy = () => {
     router.push('/');
@@ -274,31 +122,48 @@ function ResultsDisplayContent() {
     return parseFloat(value.replace('%', '').replace('+', '')) || 0;
   };
 
-  if (loading) {
+  if (failure) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-dark-primary via-dark-secondary to-dark-tertiary flex items-center justify-center">
-        <LoadingSpinner
-          size="lg"
-          text="AgentCore is processing your backtest..."
-          overlay={false}
-        />
+      <div className="min-h-screen bg-gradient-to-br from-dark-primary via-dark-secondary to-dark-tertiary">
+        <div className="container mx-auto max-w-3xl px-6 py-12">
+          <h1 className="mb-3 text-4xl font-bold text-white">
+            {failure.step ? 'The backtest stopped' : 'Something went wrong'}
+          </h1>
+          <p className="mb-8 text-gray-300">
+            {failure.step && (
+              <span className="font-semibold text-white">{STEP_LABELS[failure.step]}: </span>
+            )}
+            {failure.message}
+          </p>
+          {steps.length > 0 && (
+            <GlassCard className="p-6 md:p-8">
+              <PipelineProgress steps={steps} finished />
+            </GlassCard>
+          )}
+          <div className="mt-8 flex justify-center">
+            <AnimatedButton onClick={handleNewStrategy} variant="primary">
+              Try New Strategy
+            </AnimatedButton>
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (error || !results) {
+  if (!results) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-dark-primary via-dark-secondary to-dark-tertiary flex items-center justify-center">
-        <GlassCard className="p-8 max-w-md mx-4 text-center">
-          <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <span className="text-4xl">❌</span>
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-4">Error</h2>
-          <p className="text-gray-300 mb-6">{error || 'Failed to load backtest results'}</p>
-          <AnimatedButton onClick={handleNewStrategy} variant="primary">
-            Try New Strategy
-          </AnimatedButton>
-        </GlassCard>
+      <div className="min-h-screen bg-gradient-to-br from-dark-primary via-dark-secondary to-dark-tertiary">
+        <div className="container mx-auto max-w-3xl px-6 py-12">
+          <h1 className="mb-3 text-4xl font-bold bg-gradient-to-r from-accent-blue to-accent-purple bg-clip-text text-transparent">
+            Running your backtest
+          </h1>
+          <p className="mb-8 text-gray-300">
+            Each step reports here as it happens. This usually takes about a minute.
+          </p>
+          <GlassCard className="p-6 md:p-8">
+            <PipelineProgress steps={steps} startTime={startTime} />
+          </GlassCard>
+        </div>
       </div>
     );
   }
@@ -306,6 +171,9 @@ function ResultsDisplayContent() {
   const totalReturn = parsePercentage(results.total_return);
   const performanceColor = totalReturn >= 0 ? 'text-accent-green' : 'text-red-400';
   const performanceEmoji = totalReturn >= 20 ? '🚀' : totalReturn >= 10 ? '✅' : totalReturn >= 0 ? '📈' : '⚠️';
+  const summaryStep = steps.find(s => s.step === 'summarize');
+  const hasAnalysis = Boolean(results.executive_summary || results.detailed_analysis);
+  const totalSeconds = steps.reduce((sum, s) => sum + (s.duration_ms ?? 0), 0) / 1000;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-dark-primary via-dark-secondary to-dark-tertiary">
@@ -326,7 +194,7 @@ function ResultsDisplayContent() {
         </motion.div>
 
         {/* Sits next to the numbers, not only in the footer: a return figure
-            and a one-word verdict read as advice unless told otherwise. */}
+            reads as advice unless told otherwise. */}
         <div className="mb-10 rounded-lg border border-amber-400/30 bg-amber-400/5 px-5 py-3">
           <p className="text-sm text-amber-200/90">
             <span className="font-semibold">Simulated results.</span>{' '}
@@ -339,7 +207,7 @@ function ResultsDisplayContent() {
         </div>
 
         {/* Shown from the agent's coverage check, not the model's prose, so a
-            stale or short data window is flagged even if the narrative omits it. */}
+            stale or short data window is flagged even if the analysis omits it. */}
         {results.data_warnings && results.data_warnings.length > 0 && (
           <div className="-mt-6 mb-10 rounded-lg border border-red-400/40 bg-red-400/5 px-5 py-3">
             <p className="text-sm font-semibold text-red-300">
@@ -493,6 +361,17 @@ function ResultsDisplayContent() {
                   <p className="text-white text-lg font-medium mt-1">{results.backtest_window}</p>
                 </div>
               )}
+              {results.data_period && (
+                <div>
+                  <span className="text-gray-400">Data Period:</span>
+                  <p className="text-white text-lg font-medium mt-1">
+                    {results.data_period.start} → {results.data_period.end}{' '}
+                    <span className="text-gray-400 text-base font-normal">
+                      ({results.data_period.trading_days} trading days)
+                    </span>
+                  </p>
+                </div>
+              )}
             </div>
             {/* Buy/Sell Conditions */}
             {(results.buy_conditions || results.sell_conditions) && (
@@ -530,6 +409,20 @@ function ResultsDisplayContent() {
               <p className="text-gray-400">Powered by Pydantic AI and AgentCore</p>
             </div>
           </div>
+
+          {/* The analysis step can fail on its own; the numbers above don't
+              depend on it, so say so rather than showing an empty section. */}
+          {!hasAnalysis && (
+            <GlassCard className="p-6">
+              <p className="text-gray-300">
+                The written analysis isn&apos;t available for this run
+                {summaryStep?.detail ? `: ${summaryStep.detail}` : '.'}
+              </p>
+              <p className="mt-2 text-sm text-gray-400">
+                The numbers above come straight from the backtest and are unaffected.
+              </p>
+            </GlassCard>
+          )}
 
           {/* Executive Summary */}
           {results.executive_summary && (
@@ -750,6 +643,30 @@ function ResultsDisplayContent() {
           </motion.div>
         )}
 
+        {/* How the run went, step by step: kept after it finishes so a slow
+            or skipped step can still be seen. */}
+        {steps.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.68 }}
+            className="mb-12"
+          >
+            <GlassCard className="p-8">
+              <details>
+                <summary className="text-2xl font-semibold text-white cursor-pointer flex items-center space-x-3">
+                  <span>⏱️</span>
+                  <span>Pipeline Steps</span>
+                  <span className="text-base font-normal text-gray-400">{totalSeconds.toFixed(1)}s</span>
+                </summary>
+                <div className="mt-6">
+                  <PipelineProgress steps={steps} finished />
+                </div>
+              </details>
+            </GlassCard>
+          </motion.div>
+        )}
+
         {/* Actions */}
         <motion.div
           initial={{ opacity: 0, y: 50 }}
@@ -789,9 +706,9 @@ function ResultsDisplayContent() {
               <>
                 {' | '}
                 Backend Agents:
-                {' '}Quant: {results.versions.quant_agent}
-                {' | '}Strategy: {results.versions.strategy_generator}
-                {' | '}Summary: {results.versions.results_summary}
+                {' '}Quant: {results.versions.quant_agent ?? '—'}
+                {' | '}Strategy: {results.versions.strategy_generator ?? '—'}
+                {' | '}Summary: {results.versions.results_summary ?? '—'}
               </>
             )}
           </div>

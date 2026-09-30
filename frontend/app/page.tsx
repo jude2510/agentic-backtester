@@ -136,8 +136,9 @@ export default function StrategyBuilder() {
       const { jobId } = body;
       console.log('[StrategyBuilder] ✅ Job started, ID:', jobId);
       
-      // Navigate to workflow page with strategy and jobId
-      router.push(`/workflow?strategy=${encodeURIComponent(JSON.stringify(formData))}&jobId=${jobId}`);
+      // The results page shows the steps as they run, then the results. The
+      // strategy travels with the job, so the job id is all it needs.
+      router.push(`/results?jobId=${jobId}`);
       
     } catch (error) {
       console.error('[StrategyBuilder] ❌ Error:', error);
