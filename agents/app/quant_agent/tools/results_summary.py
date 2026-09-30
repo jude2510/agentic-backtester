@@ -8,6 +8,8 @@ import json
 import uuid
 import time
 import config
+from step_types import MarketData, StepError, SummaryReport
+from tools.sub_agents import invoke_sub_agent
 
 
 def _data_period() -> dict:
@@ -113,6 +115,43 @@ def _enrich(backtest_results: dict) -> dict:
         enriched['trades_total'] = len(all_trades)
 
     return enriched
+
+
+def summarize_backtest(result: dict, market: MarketData) -> SummaryReport:
+    """Pipeline step: have the results summary runtime write the analysis.
+
+    It gets the complete record plus pre-computed statistics and the most
+    extreme trades rather than all of them: more trades in the prompt made the
+    analysis longer, not better (see _trade_statistics).
+    """
+    payload = {key: result[key] for key in (
+        'symbol', 'trades', 'trade_summary', 'metrics', 'initial_value',
+        'final_value', 'total_return', 'strategy_class') if key in result}
+    payload['backtest_period'] = market.period
+    if market.warnings:
+        payload['data_coverage_warnings'] = market.warnings
+
+    all_trades = result.get('trades') or []
+    if all_trades:
+        payload['trade_statistics'] = _trade_statistics(all_trades)
+        payload['trades'] = _notable_trades(all_trades)
+        payload['trades_shown'] = len(payload['trades'])
+        payload['trades_total'] = len(all_trades)
+
+    data = invoke_sub_agent("BACKTEST_SUMMARY_RUNTIME_ARN", payload, "results summary agent")
+
+    # The summary runtime reports its own failures as text, not JSON.
+    analysis = str(data.get('analysis') or '')
+    try:
+        report = json.loads(analysis)
+    except ValueError:
+        print(f"❌ Results summary returned non-JSON output: {analysis}")
+        first_line = analysis.strip().splitlines()[0][:200] if analysis.strip() else 'an empty response'
+        raise StepError(f"the results summary agent couldn't write the analysis: {first_line}")
+    if not isinstance(report, dict):
+        raise StepError("the results summary agent returned the analysis in an unexpected shape")
+
+    return SummaryReport(report=report, version=data.get('version', 'unknown'))
 
 
 def create_results_summary(backtest_results: dict) -> str:

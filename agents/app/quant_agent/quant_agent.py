@@ -1,9 +1,11 @@
 """
-AgentCore Interactive Backtesting Agent
-Demonstrates "Agent as Tool" patterns with AgentCore Gateway integration.
+AgentCore Interactive Backtesting Agent, hosted on Amazon Bedrock AgentCore.
 
-Orchestrator built with Pydantic AI (agent + tools) hosted on Amazon Bedrock AgentCore.
-It coordinates strategy generation, market data, backtesting, and results summary.
+Two modes:
+  backtest  the strategy form. A fixed pipeline in code (pipeline.py) calls the
+            strategy generator and results summary runtimes, the market data
+            Gateway, and Backtrader, and streams each step's status back.
+  chat      a Pydantic AI agent that answers questions about past backtests.
 """
 
 import os
@@ -14,7 +16,12 @@ from pydantic import BaseModel, Field
 from bedrock_agentcore import BedrockAgentCoreApp
 from bedrock_agentcore.runtime import BedrockAgentCoreContext
 import config
+from pipeline import Steps, run_pipeline
 from tools import (
+    backtest_strategy,
+    fetch_market_data,
+    generate_strategy,
+    summarize_backtest,
     fetch_market_data_via_gateway,
     generate_trading_strategy,
     run_backtest,
@@ -24,6 +31,13 @@ from tools import (
 
 # Initialize the AgentCore app (lightweight)
 app = BedrockAgentCoreApp()
+
+LIVE_STEPS = Steps(
+    generate=generate_strategy,
+    fetch=fetch_market_data,
+    backtest=backtest_strategy,
+    summarize=summarize_backtest,
+)
 
 
 def _as_message(text: str) -> dict:
@@ -206,7 +220,24 @@ def invoke(payload, context=None):
                 "result": _as_message(result.output)
             }
 
-        # Default: backtest execution mode
+        # The runtime delivers this request's workload access token in request
+        # context. Captured here and re-applied in the market-data step, rather
+        # than trusting the context variable to reach the thread that step runs
+        # on. Presence only is logged, never the token.
+        config._workload_access_token = BedrockAgentCoreContext.get_workload_access_token()
+        print(f"🪪 Workload access token in request context: {config._workload_access_token is not None}")
+
+        # The strategy form's path. Returning the pipeline's generator makes the
+        # runtime stream its events (server-sent events), so the worker can
+        # record each step as it happens. The pipeline runs as the stream is
+        # read, after this function has returned, which is why anything taken
+        # from request context has to be captured above.
+        if "strategy" in payload:
+            print("🧭 Backtest mode: pipeline")
+            return run_pipeline(payload["strategy"], LIVE_STEPS, agent_version=config.VERSION)
+
+        # Legacy: the LLM orchestrator, for payloads that carry only a prompt.
+        # Kept until the worker sends `strategy`, then removed.
         print("🔬 Backtest mode: Using quant agent for 4-step backtest execution")
 
         # Reset before each run
@@ -215,13 +246,6 @@ def invoke(payload, context=None):
         config._results_summary_report = None
         config._stored_market_data = {}
         config._data_coverage_warnings = []
-
-        # The runtime delivers this request's workload access token in request
-        # context. Captured here and re-applied in the market-data tool, rather
-        # than trusting the context variable to survive into the thread Pydantic
-        # AI runs tools on. Presence only is logged, never the token.
-        config._workload_access_token = BedrockAgentCoreContext.get_workload_access_token()
-        print(f"🪪 Workload access token in request context: {config._workload_access_token is not None}")
 
         # Sent alongside the prompt by the worker so run_backtest applies it
         # directly. Clamped to what the sizing guard and the UI both allow.

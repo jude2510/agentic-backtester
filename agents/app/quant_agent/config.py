@@ -23,6 +23,12 @@ print(f"   STRATEGY_GENERATOR_RUNTIME_ARN: {os.getenv('STRATEGY_GENERATOR_RUNTIM
 print(f"   GATEWAY_CREDENTIAL_PROVIDER: {os.getenv('GATEWAY_CREDENTIAL_PROVIDER', 'Not set')}")
 print(f"   AWS_REGION: {os.getenv('AWS_REGION', 'us-east-1')}")
 
+# Calls to the sub-agent runtimes get an explicit time limit and no retries.
+# botocore's defaults retry, and a retry here would re-run a whole model
+# invocation for a request that already failed once, the same amplification
+# the worker hit in August. One attempt, and a failure the user can see.
+SUB_AGENT_TIMEOUT_SECONDS = 120
+
 # Lazy initialization globals
 _initialized = False
 _agentcore_runtime_client = None
@@ -191,13 +197,22 @@ def initialize_clients():
 
     # Import heavy modules needed for initialization
     import boto3
+    from botocore.config import Config
     from bedrock_agentcore.memory import MemoryClient
 
     # Set region
     _region_name = os.getenv('AWS_REGION', 'us-east-1')
 
     # Create boto3 clients
-    _agentcore_runtime_client = boto3.client('bedrock-agentcore', region_name=_region_name)
+    _agentcore_runtime_client = boto3.client(
+        'bedrock-agentcore',
+        region_name=_region_name,
+        config=Config(
+            connect_timeout=10,
+            read_timeout=SUB_AGENT_TIMEOUT_SECONDS,
+            retries={'max_attempts': 1, 'mode': 'standard'},
+        ),
+    )
 
     # Create memory client
     _memory_client = MemoryClient(region_name=_region_name)

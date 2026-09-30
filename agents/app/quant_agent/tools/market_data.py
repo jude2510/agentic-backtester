@@ -8,9 +8,10 @@ import os
 import json
 import time
 from datetime import date, datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import httpx
 import config
+from step_types import MarketData, StepError
 
 # Same tolerance the ingest pipeline uses for vendor truncation, so weekends
 # and market holidays around a window boundary don't read as missing data.
@@ -53,82 +54,67 @@ def check_coverage(daily_data: List[Dict[str, Any]], start_date: str = None,
     return warnings
 
 
+def parse_gateway_rows(gateway_response: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Pull (metadata, bars) out of the Gateway's JSON-RPC response.
+
+    The hierarchy is result -> content -> text -> body -> data, and the field
+    names are mapped for Backtrader (open_price -> open, high_price -> high,
+    low_price -> low, close_price -> close; volume and adj_close unchanged).
+
+    An empty list means the service answered and had no rows. Note the Lambda
+    answers "no rows" with success=false and an empty list, and currently does
+    the same when its own query fails, so the two can't be told apart here.
+    Anything else malformed or unsuccessful raises ValueError.
+    """
+    result = gateway_response.get('result', {})
+    content = result.get('content', [])
+    if not content or not isinstance(content, list):
+        raise ValueError("No content found in gateway response")
+
+    text_content = content[0].get('text', '')
+    if not text_content:
+        raise ValueError("No text content found in gateway response")
+
+    body_str = json.loads(text_content).get('body', '')
+    if not body_str:
+        raise ValueError("No body found in nested response")
+
+    body_data = json.loads(body_str)
+    metadata = body_data.get('metadata') or {}
+    raw_data = body_data.get('data')
+
+    if not body_data.get('success', False):
+        if raw_data == []:
+            return metadata, []
+        raise ValueError(body_data.get('error') or "Gateway response indicates failure")
+
+    bars = [
+        {
+            'date': item.get('date'),
+            'symbol': item.get('symbol'),
+            'open': float(item.get('open_price', 0)),
+            'high': float(item.get('high_price', 0)),
+            'low': float(item.get('low_price', 0)),
+            'close': float(item.get('close_price', 0)),
+            'volume': int(item.get('volume', 0)),
+            'adj_close': float(item.get('adj_close', 0)),
+        }
+        for item in raw_data or []
+    ]
+    print(f"📊 Found {len(bars)} data points for {metadata.get('symbol', 'UNKNOWN')}")
+    return metadata, bars
+
+
 def extract_market_data_from_gateway_response(gateway_response: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extract and transform market data from AgentCore Gateway JSON-RPC response.
-    sample: {"jsonrpc":"2.0","id":1,"result":{"isError":false,"content":[{"type":"text","text":"{\"statusCode\":200,\"body\":\"{\\\"success\\\": true, \\\"metadata\\\": {\\\"symbol\\\": \\\"AMZN\\\", \\\"total_rows\\\": 100, \\\"columns\\\": [\\\"date\\\", \\\"symbol\\\", \\\"open_price\\\", \\\"high_price\\\", \\\"low_price\\\", \\\"close_price\\\", \\\"volume\\\", \\\"adj_close\\\"]}, \\\"data\\\": [{\\\"date\\\": \\\"2000-01-03\\\", \\\"symbol\\\": \\\"AMZN\\\", \\\"open_price\\\": 4.074999809265137, \\\"high_price\\\": 4.478125095367432, \\\"low_price\\\": 3.9523439407348633, \\\"close_price\\\": 4.46875, \\\"volume\\\": 322352000, \\\"adj_close\\\": 4.46875}, {\\\"date\\\": \\\"2000-01-04\\\", \\\"symbol\\\": \\\"AMZN\\\", \\\"open_price\\\": 4.268750190734863, \\\"high_price\\\": 4.574999809265137, \\\"low_price\\\": 4.087500095367432, \\\"close_price\\\": 4.096875190734863, \\\"volume\\\": 349748000, \\\"adj_close\\\": 4.096875190734863}, {\\\"date\\\": \\\"2025-06-03\\\", \\\"symbol\\\": \\\"AMZN\\\", \\\"open_price\\\": 207.11000061035156, \\\"high_price\\\": 208.9499969482422, \\\"low_price\\\": 205.02999877929688, \\\"close_price\\\": 205.7100067138672, \\\"volume\\\": 33139100, \\\"adj_close\\\": 205.7100067138672}, {\\\"date\\\": \\\"2025-06-04\\\", \\\"symbol\\\": \\\"AMZN\\\", \\\"open_price\\\": 206.5500030517578, \\\"high_price\\\": 208.17999267578125, \\\"low_price\\\": 205.17999267578125, \\\"close_price\\\": 207.22999572753906, \\\"volume\\\": 29866400, \\\"adj_close\\\": 207.22999572753906}]}\",\"headers\":{\"Content-Type\":\"application/json\"}}"}]}}
-
-    Handles the hierarchy: result -> content -> text -> body -> data
-    Transforms field names for Backtrader compatibility:
-    - open_price -> open
-    - high_price -> high
-    - low_price -> low
-    - close_price -> close
-    - adj_close -> adj_close (kept as is)
-    - volume -> volume (kept as is)
-
-    Args:
-        gateway_response: Raw JSON-RPC response from AgentCore Gateway
-
-    Returns:
-        Structured market data ready for Backtrader
-    """
+    """Legacy orchestrator path: the parsed rows as a symbol -> daily data
+    mapping, or an 'UNKNOWN' placeholder carrying the error."""
     try:
-        # print("🔍 Extracting market data from gateway response...")
-
-        # Navigate through JSON-RPC hierarchy: result -> content -> text
-        result = gateway_response.get('result', {})
-        content = result.get('content', [])
-
-        if not content or not isinstance(content, list):
-            raise ValueError("No content found in gateway response")
-
-        # Extract text from first content item
-        text_content = content[0].get('text', '')
-        if not text_content:
-            raise ValueError("No text content found in gateway response")
-
-        # Parse the nested JSON in text content
-        nested_data = json.loads(text_content)
-
-        # Extract body from statusCode response
-        body_str = nested_data.get('body', '')
-        if not body_str:
-            raise ValueError("No body found in nested response")
-
-        # Parse the body JSON
-        body_data = json.loads(body_str)
-
-        # Verify success and extract data
-        if not body_data.get('success', False):
-            raise ValueError("Gateway response indicates failure")
-
-        raw_data = body_data.get('data', [])
-        metadata = body_data.get('metadata', {})
-
-        if not raw_data:
+        metadata, transformed_data = parse_gateway_rows(gateway_response)
+        if not transformed_data:
             raise ValueError("No market data found in response")
 
-        print(f"📊 Found {len(raw_data)} data points for {metadata.get('symbol', 'UNKNOWN')}")
-
-        # Transform data for Backtrader compatibility
-        transformed_data = []
-        for item in raw_data:
-            transformed_item = {
-                'date': item.get('date'),
-                'symbol': item.get('symbol'),
-                'open': float(item.get('open_price', 0)),
-                'high': float(item.get('high_price', 0)),
-                'low': float(item.get('low_price', 0)),
-                'close': float(item.get('close_price', 0)),
-                'volume': int(item.get('volume', 0)),
-                'adj_close': float(item.get('adj_close', 0))
-            }
-            transformed_data.append(transformed_item)
-
-        # Structure as symbol -> daily data mapping
         symbol = metadata.get('symbol', 'UNKNOWN')
-        result_data = {
+        return {
             symbol: {
                 'daily_data': transformed_data,
                 'metadata': {
@@ -141,12 +127,8 @@ def extract_market_data_from_gateway_response(gateway_response: Dict[str, Any]) 
             }
         }
 
-        # print(f"✅ Successfully extracted and transformed {len(transformed_data)} data points")
-        return result_data
-
     except Exception as e:
         print(f"❌ Error extracting market data from gateway response: {e}")
-        # Return fallback structure
         return {
             'UNKNOWN': {
                 'daily_data': [],
@@ -305,6 +287,34 @@ def call_gateway_market_data_with_cognito(symbol: str, start_date: str = None, e
     except Exception as e:
         print(f"❌ Error calling AgentCore Gateway: {e}")
         raise
+
+
+def fetch_market_data(symbol: str, start_date: str, end_date: str, limit: int) -> MarketData:
+    """Pipeline step: daily bars for the window, read through the Gateway.
+
+    Bars come back sorted, because the Iceberg scan doesn't guarantee order,
+    and with any coverage gaps listed, so a short or stale window is reported
+    instead of being backtested as if it were complete.
+    """
+    try:
+        response = call_gateway_market_data_with_cognito(symbol, start_date, end_date, limit)
+    except httpx.TimeoutException:
+        raise StepError("the market data request timed out", status="timeout")
+    except Exception as e:
+        raise StepError(f"the market data request failed: {e}")
+
+    try:
+        metadata, bars = parse_gateway_rows(response)
+    except ValueError as e:
+        raise StepError(f"the market data response could not be read: {e}")
+
+    returned = str(metadata.get('symbol') or symbol).upper()
+    if returned != symbol.upper():
+        raise StepError(f"asked for {symbol} but the market data service answered for {returned}")
+
+    bars.sort(key=lambda bar: bar['date'])
+    warnings = check_coverage(bars, start_date, end_date) if bars else []
+    return MarketData(symbol=symbol.upper(), bars=bars, warnings=warnings)
 
 
 def fetch_market_data_via_gateway(symbol: str, start_date: str = None, end_date: str = None, limit: int = 252) -> Dict[str, Any]:
