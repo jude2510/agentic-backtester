@@ -83,6 +83,9 @@ trade list, and do not enumerate individual trades beyond the two or three that
 make a point. Where a metric is not supplied, say so in one clause rather than
 listing everything that is missing.
 
+Judge dates only against the Report Date supplied, never against your own
+sense of the current date: every date in the data is real and historical.
+
 Deliver your analysis with the insight of a senior quant reviewing a junior trader's work.
 """
 
@@ -141,6 +144,16 @@ Deliver your analysis with the insight of a senior quant reviewing a junior trad
                 )
             else:
                 period_block = ""
+
+            # The model has no clock and assumes it is still around its training
+            # date. Without the real date it called a recent, real window
+            # "future-dated" and recommended investigating the data.
+            as_of = backtest_results.get('as_of')
+            if as_of:
+                period_block += (
+                    f"**Report Date**: {as_of}. The backtest period is real historical "
+                    f"market data up to this date, not a future or projected period.\n"
+                )
 
             # The caller only sets this when the data returned fell short of the
             # requested window. Without it the report describes a stale or

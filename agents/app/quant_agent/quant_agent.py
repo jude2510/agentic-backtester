@@ -10,6 +10,7 @@ Two modes:
 
 import os
 import json
+import datetime as dt
 from bedrock_agentcore import BedrockAgentCoreApp
 from bedrock_agentcore.runtime import BedrockAgentCoreContext
 import config
@@ -111,7 +112,10 @@ def invoke(payload, context=None):
 
         if payload.get("mode") == "chat":
             print("💬 Chat mode: Using chat agent for historical analysis")
-            result = _chat_agent().run_sync(payload.get("prompt"))
+            # The model has no clock. Without today's date it can read recent,
+            # real backtest dates as future ones, as the summarizer did.
+            prompt = f"(Today's date is {dt.date.today().isoformat()}.)\n\n{payload.get('prompt')}"
+            result = _chat_agent().run_sync(prompt)
             return {
                 "result": _as_message(result.output)
             }

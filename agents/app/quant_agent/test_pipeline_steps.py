@@ -262,6 +262,8 @@ def main() -> int:
           and "profit_factor" in sent["trade_statistics"], (sent.get("trades_total"), len(sent["trades"])))
     check("summarize: sends the period the data actually covers",
           sent["backtest_period"] == market.period, sent.get("backtest_period"))
+    check("summarize: sends today's date, so recent data isn't read as future-dated",
+          sent.get("as_of") == dt.date.today().isoformat(), sent.get("as_of"))
 
     config._agentcore_runtime_client = FakeRuntime(
         {SUMMARY_ARN: {"analysis": "❌ **Analysis Error**: model unavailable\n\nDetails:\n...",

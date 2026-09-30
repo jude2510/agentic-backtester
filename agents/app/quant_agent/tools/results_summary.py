@@ -4,6 +4,7 @@ Has the results summary runtime write the analysis of a backtest.
 """
 
 import json
+from datetime import date
 from step_types import MarketData, StepError, SummaryReport
 from tools.sub_agents import invoke_sub_agent
 
@@ -68,6 +69,10 @@ def summarize_backtest(result: dict, market: MarketData) -> SummaryReport:
         'symbol', 'trades', 'trade_summary', 'metrics', 'initial_value',
         'final_value', 'total_return', 'strategy_class') if key in result}
     payload['backtest_period'] = market.period
+    # The summarizer has no clock and assumes it is still around its training
+    # date: without this it called a real Sep 2025-Sep 2026 window
+    # "future-dated" and made verifying the data its top recommendation.
+    payload['as_of'] = date.today().isoformat()
     if market.warnings:
         payload['data_coverage_warnings'] = market.warnings
 
