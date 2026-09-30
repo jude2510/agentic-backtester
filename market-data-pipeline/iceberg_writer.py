@@ -119,6 +119,21 @@ def last_date_for(table, symbol: str) -> dt.date | None:
     return max(arrow.column("date").to_pylist())
 
 
+def coverage(table) -> dict:
+    """Stored date range and row count per symbol, as JSON-ready values."""
+    arrow = table.scan(selected_fields=("symbol", "date")).to_arrow()
+    grouped = arrow.group_by("symbol").aggregate(
+        [("date", "min"), ("date", "max"), ("date", "count")])
+    return {
+        row["symbol"]: {
+            "start": row["date_min"].isoformat(),
+            "end": row["date_max"].isoformat(),
+            "rows": row["date_count"],
+        }
+        for row in grouped.to_pylist()
+    }
+
+
 def series_to_arrow(series: BarSeries, since: dt.date | None = None) -> pa.Table:
     """Convert a BarSeries to an Arrow table matching the Iceberg schema."""
     rows = [b.to_row() for b in series.bars if since is None or b.date >= since]

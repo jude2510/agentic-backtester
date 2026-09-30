@@ -38,6 +38,7 @@ _results_summary_report = None  # Store the results_summary structured report (J
 _stored_market_data = {}
 _data_coverage_warnings = []  # Gaps between the requested window and the rows returned
 _workload_access_token = None  # This request's AgentCore Identity token; never logged
+_position_pct = None  # User's position size (% of cash) for this request; None = backtest default
 _actor_id = "Quant"
 _strategy_generator_version = "unknown"  # Track strategy generator version
 _results_summary_version = "unknown"  # Track results summary version

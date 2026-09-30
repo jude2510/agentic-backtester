@@ -121,7 +121,10 @@ def handler(event, context):
         else:
             strategy_input = event["strategyInput"]
             agent_payload = {
-                "prompt": f"how is the strategy performance: {json.dumps(strategy_input)}"
+                "prompt": f"how is the strategy performance: {json.dumps(strategy_input)}",
+                # Passed as its own field so the agent applies it directly,
+                # rather than hoping the model copies it into a tool argument.
+                "position_pct": strategy_input.get("position_pct"),
             }
 
         response = _agentcore.invoke_agent_runtime(

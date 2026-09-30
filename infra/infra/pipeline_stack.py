@@ -42,6 +42,17 @@ _PIPELINE_DIR = os.path.join(_REPO_ROOT, "market-data-pipeline")
 
 MASSIVE_KEY_PARAM = "/agentic-backtest/massive-api-key"
 
+# Each symbol's stored date range, written by the ingest after every run and
+# read by the frontend. Created by the Lambda's first run, not by CloudFormation,
+# so the stack never overwrites a live value with a placeholder.
+COVERAGE_PARAM = "/agentic-backtest/market-data-coverage"
+
+
+def coverage_param_arn(stack: Stack) -> str:
+    # Parameter ARNs omit the leading slash of the name.
+    return stack.format_arn(service="ssm", resource="parameter",
+                            resource_name=COVERAGE_PARAM.lstrip("/"))
+
 # Referenced by name rather than as a cross-stack export, so BackendStack can
 # still replace or rename its Lambda without first unwinding an export.
 MARKET_DATA_FUNCTION = "agentic-backtest-market-data"
@@ -68,6 +79,7 @@ class PipelineStack(Stack):
             environment={
                 "MASSIVE_API_KEY_PARAM": MASSIVE_KEY_PARAM,
                 "MARKET_DATA_FUNCTION": MARKET_DATA_FUNCTION,
+                "COVERAGE_PARAM": COVERAGE_PARAM,
             },
         )
 
@@ -82,6 +94,14 @@ class PipelineStack(Stack):
         ssm.StringParameter.from_secure_string_parameter_attributes(
             self, "MassiveApiKey", parameter_name=MASSIVE_KEY_PARAM,
         ).grant_read(ingest_fn)
+
+        # An explicit statement rather than StringParameter.from_string_parameter_name,
+        # which adds a CloudFormation parameter that resolves the value at deploy
+        # time — and fails the deploy, because the Lambda creates it on first run.
+        ingest_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["ssm:PutParameter"],
+            resources=[coverage_param_arn(self)],
+        ))
 
         lambda_.Function.from_function_name(
             self, "MarketDataFn", MARKET_DATA_FUNCTION,

@@ -1,6 +1,6 @@
 """
 Scheduled ingest — `ingest.py --delta`, then a read-back through the agent's
-own data path.
+own data path, then publish what the table actually holds.
 
 Until 2026-09-23 the ingest only ever ran by hand, and the table sat 40 days
 stale with nothing to say so. This runs it on a schedule and then checks the
@@ -13,6 +13,10 @@ and Lambda deactivates idle image functions; the Gateway calls it synchronously,
 and a synchronous call on an inactive function fails while it restores. Without
 regular traffic, the first backtest after a quiet spell would pay for its model
 calls and then fail to get data.
+
+Finally it publishes each symbol's stored date range to an SSM parameter. The
+frontend reads that to decide which backtest windows to offer, so the form
+follows the data instead of a hardcoded copy of it.
 """
 
 import datetime as dt
@@ -20,8 +24,6 @@ import json
 import os
 
 import boto3
-
-from ingest import load_symbols, main as ingest_main
 
 # Served data older than this fails the run. Matches the agent's coverage
 # tolerance: a long weekend is 3-4 days, so 5 flags only real staleness.
@@ -57,7 +59,30 @@ def _served_last_date(symbol: str) -> dt.date:
     return dt.date.fromisoformat(rows[-1]["date"])
 
 
+def _publish_coverage() -> dict:
+    """Write each symbol's stored date range where the frontend reads it."""
+    from iceberg_writer import coverage, get_catalog, load_table_if_exists
+
+    stored = coverage(load_table_if_exists(get_catalog()))
+    _ssm.put_parameter(
+        Name=os.environ["COVERAGE_PARAM"],
+        Type="String",
+        Overwrite=True,
+        Value=json.dumps({
+            "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "symbols": stored,
+        }),
+    )
+    return stored
+
+
 def handler(event, context):
+    # Imported here, not at module level. pyarrow, pyiceberg and pandas take
+    # longer to import than Lambda's fixed 10-second init phase allows, so a
+    # module-level import made every cold start time out once and run init
+    # again inside the invocation.
+    from ingest import load_symbols, main as ingest_main
+
     _load_api_key()
 
     if ingest_main(["--delta"]) != 0:
@@ -69,6 +94,11 @@ def handler(event, context):
 
     for s, d in served.items():
         print(f"📡 {s}: serving through {d}")
+
+    # Published even when stale, so the site reports what it really holds.
+    stored = _publish_coverage()
+    print(f"🗺️  coverage published for {len(stored)} symbols")
+
     if stale:
         raise RuntimeError(f"written but still stale when read back: {stale}")
 

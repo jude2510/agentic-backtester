@@ -26,6 +26,8 @@ from aws_cdk.aws_ecr_assets import Platform
 from aws_cdk.aws_lambda import Architecture, DockerImageCode, DockerImageFunction
 from constructs import Construct
 
+from infra.pipeline_stack import coverage_param_arn
+
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _WORKER_DIR = os.path.join(_REPO_ROOT, "backtest-worker")
 
@@ -144,7 +146,7 @@ class HostingStack(Stack):
         # than long-lived access keys sitting in environment variables.
         #
         # Scoped to what the routes actually do: increment quota counters, read
-        # and write job rows, and kick the worker. The routes never call the
+        # and write job rows, kick the worker, and read the data coverage. The routes never call the
         # agent themselves — every model call goes through the worker — so this
         # role has no AgentCore permissions at all, and a bug in a public route
         # cannot reach a model except through the quota-checked worker path.
@@ -157,6 +159,14 @@ class HostingStack(Stack):
         quota_table.grant_read_write_data(ssr_role)
         jobs_table.grant_read_write_data(ssr_role)
         worker.grant_invoke(ssr_role)
+
+        # The data coverage the pipeline publishes after each run: the form
+        # reads it to offer only backtest windows the data can back, and the
+        # health check reads it for freshness.
+        ssr_role.add_to_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[coverage_param_arn(self)],
+        ))
 
         self.ssr_role = ssr_role
 

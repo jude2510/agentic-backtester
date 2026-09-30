@@ -223,6 +223,16 @@ def invoke(payload, context=None):
         config._workload_access_token = BedrockAgentCoreContext.get_workload_access_token()
         print(f"🪪 Workload access token in request context: {config._workload_access_token is not None}")
 
+        # Sent alongside the prompt by the worker so run_backtest applies it
+        # directly. Clamped to what the sizing guard and the UI both allow.
+        config._position_pct = None
+        if payload.get("position_pct") is not None:
+            try:
+                config._position_pct = max(1, min(95, int(float(payload["position_pct"]))))
+            except (TypeError, ValueError):
+                print(f"⚠️ Ignoring invalid position_pct: {payload.get('position_pct')!r}")
+        print(f"📐 Position size: {config._position_pct or 'default'}% of cash")
+
         # Prepend resolved dates so the model never has to guess "today".
         dated_prompt = f"{_date_reference()}\n{payload.get('prompt')}"
         result = config._quant_agent.run_sync(dated_prompt)

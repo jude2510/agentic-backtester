@@ -101,11 +101,17 @@ def run_backtest(symbol: str, strategy_code: str, params: dict = None) -> dict:
     except Exception as e:
         print(f"❌ Error displaying sample data: {e}")
 
+    # The user's position size comes from the request, not from the model: the
+    # model chooses these tool arguments and could drop or invent the value.
+    params = dict(params or {'initial_cash': 100000, 'commission': 0.001})
+    if config._position_pct is not None:
+        params['position_pct'] = config._position_pct
+
     # Prepare backtest input
     backtest_input = {
         'strategy_code': strategy_code,
         'market_data': {symbol_key: df},  # Pass DataFrame for Backtrader
-        'params': params or {'initial_cash': 100000, 'commission': 0.001}
+        'params': params
     }
 
     print(f"📥 INPUT: strategy_code length: {len(strategy_code)}, symbol: {symbol_key}, rows: {len(daily_data)}")
