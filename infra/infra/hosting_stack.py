@@ -73,7 +73,7 @@ class HostingStack(Stack):
         )
 
         # --- Job state + worker ---------------------------------------------
-        # A backtest runs ~85s. Serverless SSR freezes its execution
+        # A backtest runs about a minute. Serverless SSR freezes its execution
         # environment the moment a response is sent, so the slow work cannot
         # live in the request handler, and per-instance memory cannot hold the
         # job status. Both move here.
@@ -96,8 +96,8 @@ class HostingStack(Stack):
                 platform=Platform.LINUX_ARM64,
             ),
             architecture=Architecture.ARM_64,
-            # Comfortably past the ~85s a backtest takes, with headroom for a
-            # cold agent runtime (which alone can add 90s).
+            # Comfortably past the minute a backtest takes, with headroom for
+            # cold runtimes and each model step's 120s limit.
             timeout=Duration.minutes(10),
             memory_size=512,
             environment={

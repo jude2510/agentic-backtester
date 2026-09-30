@@ -4,7 +4,7 @@
  * POST enqueues a backtest and returns immediately; GET polls for the result.
  *
  * Both the job state and the slow work live outside this route on purpose. A
- * backtest takes ~85 seconds, and serverless SSR freezes its execution
+ * backtest takes about a minute, and serverless SSR freezes its execution
  * environment as soon as a response is sent — so an un-awaited background task
  * started here would be killed mid-flight, and a per-instance in-memory job map
  * would be invisible to whichever instance served the next poll.

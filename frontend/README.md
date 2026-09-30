@@ -7,15 +7,16 @@ A Next.js 14 (App Router) UI for the Agentic Backtester: a strategy form, a resu
 A backtest takes a minute or more, but Amplify's server-side rendering cuts off any request after 30 seconds, so no route waits on a model:
 
 1. **POST** `/api/execute-backtest-async` checks the quota counters, writes a job row to DynamoDB and invokes the worker Lambda asynchronously. It returns a job ID in well under a second.
-2. The **worker** ([`backtest-worker/`](../backtest-worker)) invokes the Quant Agent and writes the result to the job row.
-3. The results page **polls** the same route with `?jobId=` until the job is complete or has failed.
+2. The **worker** ([`backtest-worker/`](../backtest-worker)) invokes the Quant Agent's backtest pipeline, which streams each step's status as it happens. The worker writes each step onto the job row, then the result.
+3. The results page **polls** the same route with `?jobId=` every 2 seconds, showing each step as it reports, until the job is complete or has stopped at a step.
 
 Chat (`/api/chat`) works the same way. Quota enforcement is in [`lib/quota.ts`](./lib/quota.ts): atomic DynamoDB counters, which fail closed if the table can't be reached.
 
 - **`app/page.tsx`**: strategy form. It offers only the symbols and backtest windows the stored data covers, read from `/api/coverage`.
 - **`app/api/coverage`**: each symbol's stored date range, which the ingest pipeline publishes to SSM after every run
 - **`app/api/health`**: data freshness and remaining capacity, live on every request (200 healthy, 503 degraded), with no model calls
-- **`app/results/`**: metrics, trades, the report, and warnings when the data fell short of the requested window
+- **`app/results/`**: the steps while the backtest runs, then metrics, trades, the report, and warnings when the data fell short of the requested window
+- **`components/PipelineProgress.tsx`**: the step list, showing only statuses the agent actually reported
 - **`app/chat/`**: questions about past backtests
 - **`components/Disclaimer.tsx`**: the site-wide "not financial advice" footer
 

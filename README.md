@@ -10,14 +10,17 @@ Describe a trading strategy in plain English and get back a backtest: a team of 
 
 ## How it works
 
-A backtest request is queued and handed to a worker, which invokes the **Quant Agent** (Claude Sonnet 4.6). The Quant Agent orchestrates four steps:
+A backtest request is queued and handed to a worker, which invokes the **Quant Agent** runtime. It runs a fixed pipeline in code, not a model deciding what to call, and streams each step's status back to the worker, which records it for the results page:
 
-1. **Strategy Generator** (Claude Opus 4.6, its own AgentCore runtime) turns the strategy into [Backtrader](https://www.backtrader.com/) Python code.
-2. **Market data** comes over MCP from an AgentCore Gateway (Cognito machine-to-machine auth), backed by a Lambda that reads an S3 Tables (Apache Iceberg) table. The fetch checks the dates it got against the dates it asked for, and flags any gap.
-3. **Backtest** runs the generated code through Backtrader after static validation and inside a restricted namespace.
-4. **Results Summarizer** (Claude Sonnet 4.6, its own runtime) returns a schema-validated report built from statistics computed in Python.
+1. **Prepare**: the form is validated and the backtest window resolved to dates.
+2. **Strategy Generator** (Claude Opus 4.6, its own AgentCore runtime) turns the strategy into [Backtrader](https://www.backtrader.com/) Python code, which is checked against the sandbox rules straight away.
+3. **Market data** comes over MCP from an AgentCore Gateway (Cognito machine-to-machine auth), backed by a Lambda that reads an S3 Tables (Apache Iceberg) table. The fetch checks the dates it got against the dates it asked for, and flags any gap.
+4. **Backtest** runs the generated code through Backtrader inside a restricted namespace.
+5. **Results Summarizer** (Claude Sonnet 4.6, its own runtime) returns a schema-validated report built from statistics computed in Python.
 
-Market data is ingested from the [Massive](https://massive.com) API (US equities) by a scheduled pipeline, and AgentCore Memory lets a chat view answer questions about past runs.
+Each step reports `ok`, `empty`, `failed`, `timeout` or `skipped`, and empty is not failure: no market data stops the run, a strategy that never trades still gets an analysis, and a failed analysis keeps the numbers.
+
+Market data is ingested from the [Massive](https://massive.com) API (US equities) by a scheduled pipeline, and AgentCore Memory lets a chat view (Claude Sonnet 4.6) answer questions about past runs.
 
 ```mermaid
 flowchart LR
@@ -25,8 +28,8 @@ flowchart LR
   FE -- quota check --> Q[(Quota counters)]
   FE -- job row, polling --> J[(Job table)]
   FE -- async invoke --> W[Worker Lambda]
-  W --> J
-  W --> QA[Quant Agent<br/>Sonnet 4.6]
+  W -- steps, result --> J
+  W -- invoke / step events --> QA[Quant Agent runtime<br/>backtest pipeline · chat]
   QA --> SG[Strategy Generator<br/>Opus 4.6]
   QA --> BT[Sandboxed Backtrader]
   QA --> RS[Results Summarizer<br/>Sonnet 4.6]
@@ -44,6 +47,7 @@ flowchart LR
 The project started from an AWS workshop sample. The core idea of agents that write, run and explain a strategy is theirs. Most of my work went into making it trustworthy and safe to run in public, because a backtester's real failure mode isn't crashing. It's returning a confident, well-formatted, wrong answer, and most of the bugs I found here were exactly that.
 
 - **Real market data, kept current.** A pipeline ([`market-data-pipeline/`](./market-data-pipeline)) replaced the sample's single stale CSV with five symbols from Massive. Every write is an Iceberg filtered overwrite (atomic delete-then-insert), so re-runs are idempotent and duplicate rows are structurally impossible. Existing history is preserved and extended, which keeps AMZN back to 2000 even though the data plan only serves five years. The vendor silently clamps requests that go past the plan limit, so the pipeline checks coverage explicitly. It runs on a schedule, reads its own output back through the agent's data path, and alarms both on failure and on silence.
+- **A fixed pipeline instead of an LLM orchestrator.** In the sample, a Sonnet agent decided the order of the steps itself. Measured, it spent about 40 of every 80 seconds choosing what to call next and writing a narrative the UI never displayed, and it could quietly work around a failed step instead of reporting it. Code now runs the steps in order, and models do only the two jobs that need them. A backtest went from 75–85 seconds to under a minute and from six Sonnet calls to one (88% fewer input tokens), and the results page shows each step's real status as it happens.
 - **Deterministic work kept out of the model.** The model has no clock and was backtesting year-old windows, so dates are now resolved in code for every request. The summarizer's arithmetic moved to Python, which made it both faster (116s to 26s) and more accurate. Its hand-computed figures had been wrong.
 - **Structured outputs.** The agents moved from Strands to Pydantic AI, and the report is a typed, validated schema rather than parsed free text.
 - **Sandboxed generated code, and no secrets beside it.** LLM-written Python is checked against an import and attribute allowlist, then executed with restricted builtins. This is defence in depth, not true isolation, and that limit is documented. The container that runs this code also holds no long-lived credentials. The agent gets short-lived Gateway tokens from AgentCore Identity, which keeps the client secret in Secrets Manager.

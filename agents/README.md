@@ -4,7 +4,7 @@ The three agents behind the [Agentic Backtester](../README.md), managed as a sin
 
 | Agent (`app/`) | Role | Model |
 | --- | --- | --- |
-| `quant_agent` | Orchestrator — coordinates the other two plus the market-data and backtest tools; holds chat memory | Claude Sonnet 4.6 |
+| `quant_agent` | Runs the backtest pipeline in code (`pipeline.py`): calls the other two, the market-data Gateway and Backtrader, and streams each step's status. Also answers chat questions about past runs from memory | Claude Sonnet 4.6 (chat only) |
 | `strategy_generator` | Turns a natural-language strategy into Backtrader code | Claude Opus 4.6 |
 | `results_summary` | Writes the performance report as a typed, validated schema | Claude Sonnet 4.6 |
 
