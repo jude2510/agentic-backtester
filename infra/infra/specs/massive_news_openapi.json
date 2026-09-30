@@ -1,0 +1,110 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Massive ticker news",
+    "version": "1.0.0",
+    "description": "The one Massive endpoint the agents use for news. Kept deliberately narrow: the gateway exposes exactly what is described here."
+  },
+  "servers": [
+    { "url": "https://api.massive.com" }
+  ],
+  "paths": {
+    "/v2/reference/news": {
+      "get": {
+        "operationId": "getTickerNews",
+        "summary": "News articles about a stock, with per-ticker sentiment",
+        "description": "Articles that mention the ticker, newest first by default. Each article lists every ticker it mentions and a sentiment per ticker, so an article can mention the requested ticker only in passing.",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "query",
+            "required": true,
+            "description": "Stock symbol, e.g. AMZN",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "published_utc.gte",
+            "in": "query",
+            "required": false,
+            "description": "Earliest publication date, YYYY-MM-DD",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "published_utc.lte",
+            "in": "query",
+            "required": false,
+            "description": "Latest publication date, YYYY-MM-DD",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "Sort direction",
+            "schema": { "type": "string", "enum": ["asc", "desc"] }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "Sort field",
+            "schema": { "type": "string", "enum": ["published_utc"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum articles to return (1-100)",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching articles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "status": { "type": "string" },
+                    "next_url": { "type": "string" },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "title": { "type": "string" },
+                          "published_utc": { "type": "string" },
+                          "article_url": { "type": "string" },
+                          "description": { "type": "string" },
+                          "publisher": {
+                            "type": "object",
+                            "properties": { "name": { "type": "string" } }
+                          },
+                          "tickers": { "type": "array", "items": { "type": "string" } },
+                          "insights": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ticker": { "type": "string" },
+                                "sentiment": { "type": "string" },
+                                "sentiment_reasoning": { "type": "string" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

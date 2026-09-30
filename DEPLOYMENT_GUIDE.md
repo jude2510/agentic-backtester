@@ -48,12 +48,18 @@ The account ID and region are set in [`infra/app.py`](./infra/app.py). Change th
 
 ## 2. Backend infrastructure
 
+First store the Massive API key as a Secrets Manager secret, which the stacks reference but never contain. Piping the JSON in keeps the key out of your shell history and the process list:
+
 ```bash
+jq -n --arg k "$MASSIVE_API_KEY" '{api_key: $k}' | \
+  aws secretsmanager create-secret --name agentic-backtest/massive-api-key \
+    --secret-string file:///dev/stdin
+
 cdk deploy agentic-backtest-data agentic-backtest-backend
 ```
 
 - **`agentic-backtest-data`** creates the S3 Tables table bucket `agentic-backtest-market-data` (retained on delete).
-- **`agentic-backtest-backend`** creates the market-data Lambda, a Cognito user pool with a machine-to-machine client, and the AgentCore Gateway that exposes the Lambda as an MCP tool.
+- **`agentic-backtest-backend`** creates the market-data Lambda, a Cognito user pool with a machine-to-machine client, and the AgentCore Gateway with two MCP tools: market data (the Lambda) and Massive news. For news, the Gateway calls Massive itself with a key from an AgentCore Identity credential provider that points at the secret, so the key never reaches the agents.
 
 Note the outputs `GatewayUrl` (the MCP endpoint is this URL **plus `/mcp`**), `CognitoDomain` and `CognitoClientId`. The client secret is deliberately not an output:
 
@@ -192,12 +198,9 @@ No environment variables are required: the table and worker names default to the
 
 The `agentic-backtest-pipeline` stack runs `ingest.py --delta` at 02:00 UTC Tuesday to Saturday (after the US close all year round). It then reads every symbol back through the market-data Lambda and fails if any is more than five days old. Finally, it publishes each symbol's stored date range to the SSM parameter `/agentic-backtest/market-data-coverage`, which the site reads to decide which backtest windows to offer and to report freshness at `/api/health`. It alarms on failure, and on three days without a run.
 
-The Massive key goes in an SSM SecureString, which CloudFormation can't create. `$MASSIVE_API_KEY` is expanded by the shell, so the key doesn't end up in your shell history:
+It reads the Massive key from the same secret as the news target (section 2), so rotating the key means updating one secret.
 
 ```bash
-aws ssm put-parameter --name /agentic-backtest/massive-api-key \
-  --type SecureString --value "$MASSIVE_API_KEY"
-
 cd infra && source .venv/bin/activate
 export BUDGET_ALERT_EMAIL=<you@example.com>
 cdk deploy agentic-backtest-pipeline      # then confirm the SNS subscription email
@@ -234,7 +237,7 @@ npm run dev                       # http://localhost:3000
 cd infra && source .venv/bin/activate
 cdk destroy agentic-backtest-pipeline agentic-backtest-hosting agentic-backtest-backend agentic-backtest-data
 aws cloudformation delete-stack --stack-name AgentCore-agenticbacktester-default    # the three agents
-aws ssm delete-parameter --name /agentic-backtest/massive-api-key
+aws secretsmanager delete-secret --secret-id agentic-backtest/massive-api-key
 ```
 
 Then delete the Amplify app in the console. The data bucket is retained on purpose. Delete it with `aws s3tables delete-table-bucket` if you want the data gone too.

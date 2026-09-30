@@ -5,15 +5,20 @@ Built in layers:
   1. Lambda (market-data-mcp) — reads S3 Tables, exposes get_market_data
   2. Cognito (user pool + M2M client) — inbound auth for the Gateway
   3. AgentCore Gateway + Target — the MCP endpoint the quant agent calls
+  4. Massive news target — a second Gateway tool, calling the Massive API
+     with a key the Gateway fetches from AgentCore Identity
 
 Consumes the S3 Tables bucket created by DataStack.
 """
 
+import json
 import os
 
 from aws_cdk import Stack, CfnOutput, Duration, RemovalPolicy, CfnResource
+from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_cognito as cognito
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk.aws_lambda import Architecture, DockerImageCode, DockerImageFunction
 from aws_cdk.aws_ecr_assets import Platform
 
@@ -22,6 +27,16 @@ from constructs import Construct
 # Absolute path to the market-data component (Dockerfile + lambda live here).
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _MARKET_DATA_DIR = os.path.join(_REPO_ROOT, "market-data-mcp")
+_NEWS_SPEC = os.path.join(os.path.dirname(__file__), "specs", "massive_news_openapi.json")
+
+# The Massive API key, as a Secrets Manager secret holding {"api_key": "..."}.
+# Created outside CloudFormation so the key never appears in a template:
+#   aws secretsmanager create-secret --name agentic-backtest/massive-api-key \
+#     --secret-string "{\"api_key\": \"$MASSIVE_API_KEY\"}"
+# The news target and the ingest pipeline both read this one secret.
+MASSIVE_API_KEY_SECRET = "agentic-backtest/massive-api-key"
+MASSIVE_API_KEY_JSON_KEY = "api_key"
+MASSIVE_CREDENTIAL_PROVIDER = "massive-api"
 
 
 class BackendStack(Stack):
@@ -182,5 +197,80 @@ class BackendStack(Stack):
         )
         target.node.add_dependency(gateway)
 
+        # --- Layer 4: Massive news target -------------------------------------
+        # The Gateway calls Massive itself and attaches the API key on each
+        # request, so the key never enters the agent's container. AgentCore
+        # Identity holds it as an API-key credential provider that points at
+        # the customer-managed secret (EXTERNAL), rather than copying it.
+        massive_secret = secretsmanager.Secret.from_secret_name_v2(
+            self, "MassiveApiKeySecret", MASSIVE_API_KEY_SECRET,
+        )
+
+        massive_provider = agentcore.CfnApiKeyCredentialProvider(
+            self, "MassiveApiKeyProvider",
+            name=MASSIVE_CREDENTIAL_PROVIDER,
+            api_key_secret_source="EXTERNAL",
+            api_key_secret_config=agentcore.CfnApiKeyCredentialProvider.SecretReferenceProperty(
+                secret_id=MASSIVE_API_KEY_SECRET,
+                json_key=MASSIVE_API_KEY_JSON_KEY,
+            ),
+        )
+
+        # What the Gateway needs to use that provider: a token for its own
+        # workload identity, the API key from the token vault, and the secret
+        # behind it. Scoped to this gateway, this provider and this secret.
+        gateway_identity_resources = [
+            self.format_arn(service="bedrock-agentcore", resource="workload-identity-directory",
+                            resource_name="default"),
+            self.format_arn(service="bedrock-agentcore", resource="workload-identity-directory",
+                            resource_name="default/workload-identity/agentic-backtest-gateway-*"),
+        ]
+        gateway_role.add_to_policy(iam.PolicyStatement(
+            actions=["bedrock-agentcore:GetWorkloadAccessToken"],
+            resources=gateway_identity_resources,
+        ))
+        gateway_role.add_to_policy(iam.PolicyStatement(
+            actions=["bedrock-agentcore:GetResourceApiKey"],
+            resources=[
+                self.format_arn(service="bedrock-agentcore", resource="token-vault",
+                                resource_name="default"),
+                massive_provider.attr_credential_provider_arn,
+                *gateway_identity_resources,
+            ],
+        ))
+        massive_secret.grant_read(gateway_role)
+
+        with open(_NEWS_SPEC) as f:
+            news_spec = json.load(f)
+
+        # Tool name the agent calls: 'massive-news___getTickerNews'.
+        news_target = CfnResource(
+            self, "MassiveNewsTarget",
+            type="AWS::BedrockAgentCore::GatewayTarget",
+            properties={
+                "Name": "massive-news",
+                "GatewayIdentifier": gateway.get_att("GatewayIdentifier").to_string(),
+                "CredentialProviderConfigurations": [{
+                    "CredentialProviderType": "API_KEY",
+                    "CredentialProvider": {
+                        "ApiKeyCredentialProvider": {
+                            "ProviderArn": massive_provider.attr_credential_provider_arn,
+                            "CredentialLocation": "HEADER",
+                            "CredentialParameterName": "Authorization",
+                            "CredentialPrefix": "Bearer",
+                        }
+                    },
+                }],
+                "TargetConfiguration": {
+                    "Mcp": {"OpenApiSchema": {"InlinePayload": json.dumps(news_spec)}}
+                },
+            },
+        )
+        # The permissions above live in the role's separate DefaultPolicy
+        # resource; depend on that, not just the role, so they exist first.
+        news_target.node.add_dependency(gateway, gateway_role.node.find_child("DefaultPolicy"))
+
+        CfnOutput(self, "MassiveCredentialProviderArn",
+                  value=massive_provider.attr_credential_provider_arn)
         CfnOutput(self, "GatewayUrl", value=gateway.get_att("GatewayUrl").to_string())
         CfnOutput(self, "GatewayArn", value=gateway.get_att("GatewayArn").to_string())

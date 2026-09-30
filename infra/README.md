@@ -5,7 +5,7 @@ The Agentic Backtester's AWS infrastructure is defined here as Infrastructure-as
 ## Stacks
 
 - **`agentic-backtest-data`** (`infra/data_stack.py`) — the S3 Tables *table bucket* `agentic-backtest-market-data`, the durable market-data store. The Iceberg table and rows are written by the [ingest pipeline](../market-data-pipeline), because Iceberg table management belongs to pyiceberg, not CloudFormation.
-- **`agentic-backtest-backend`** (`infra/backend_stack.py`) — the market-data **Lambda** (arm64 container image), **Cognito** (user pool + domain + machine-to-machine client for gateway auth), and the **AgentCore Gateway + Target** that exposes the Lambda as an MCP tool.
+- **`agentic-backtest-backend`** (`infra/backend_stack.py`) — the market-data **Lambda** (arm64 container image), **Cognito** (user pool + domain + machine-to-machine client for gateway auth), and the **AgentCore Gateway** with two MCP tools: market data (the Lambda) and **Massive news** (an OpenAPI target that calls Massive with a key from an AgentCore Identity credential provider, backed by the `agentic-backtest/massive-api-key` secret).
 - **`agentic-backtest-hosting`** (`infra/hosting_stack.py`) — what public hosting needs: DynamoDB quota counters and job table, the **backtest worker** Lambda, the IAM role Amplify's server-side routes run as, and a $25/month **AWS Budget** on gross usage.
 - **`agentic-backtest-pipeline`** (`infra/pipeline_stack.py`) — the scheduled **ingest Lambda** (weekdays after the US close, with a read-back check, publishing each symbol's date range for the site) and its failure and not-running alarms.
 

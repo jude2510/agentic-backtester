@@ -30,15 +30,19 @@ import boto3
 MAX_STALENESS_DAYS = 5
 
 _ssm = boto3.client("ssm")
+_secrets = boto3.client("secretsmanager")
 _lambda = boto3.client("lambda")
 
 
 def _load_api_key() -> None:
-    """Fetch the Massive key from SSM once per container, into the env var the provider reads."""
+    """Fetch the Massive key once per container, into the env var the provider reads.
+
+    The same secret backs the news gateway target, so there is one copy to rotate.
+    """
     if not os.getenv("MASSIVE_API_KEY"):
-        param = _ssm.get_parameter(Name=os.environ["MASSIVE_API_KEY_PARAM"],
-                                   WithDecryption=True)
-        os.environ["MASSIVE_API_KEY"] = param["Parameter"]["Value"]
+        secret = _secrets.get_secret_value(SecretId=os.environ["MASSIVE_API_KEY_SECRET"])
+        value = json.loads(secret["SecretString"])[os.environ["MASSIVE_API_KEY_JSON_KEY"]]
+        os.environ["MASSIVE_API_KEY"] = value
 
 
 def _served_last_date(symbol: str) -> dt.date:

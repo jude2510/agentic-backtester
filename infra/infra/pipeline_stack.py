@@ -13,12 +13,9 @@ Cognito or the reader Lambda the agent depends on.
   2. Schedule — weekdays after the US close
   3. Alarms — on failure, and on silence
 
-The Massive API key lives in an SSM SecureString created outside CloudFormation
-(CFN cannot create SecureString parameters, and the value must not be in the
-template):
-
-  aws ssm put-parameter --name /agentic-backtest/massive-api-key \\
-      --type SecureString --value "$MASSIVE_API_KEY"
+The Massive API key is the Secrets Manager secret the news gateway target also
+uses (see MASSIVE_API_KEY_SECRET in backend_stack.py), so rotating it means
+updating one place.
 """
 
 import os
@@ -31,16 +28,16 @@ from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_sns as sns
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns_subscriptions as subs
-from aws_cdk import aws_ssm as ssm
 from aws_cdk.aws_ecr_assets import Platform
 from aws_cdk.aws_lambda import Architecture, DockerImageCode, DockerImageFunction
 from constructs import Construct
 
+from infra.backend_stack import MASSIVE_API_KEY_JSON_KEY, MASSIVE_API_KEY_SECRET
+
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _PIPELINE_DIR = os.path.join(_REPO_ROOT, "market-data-pipeline")
-
-MASSIVE_KEY_PARAM = "/agentic-backtest/massive-api-key"
 
 # Each symbol's stored date range, written by the ingest after every run and
 # read by the frontend. Created by the Lambda's first run, not by CloudFormation,
@@ -77,7 +74,8 @@ class PipelineStack(Stack):
             timeout=Duration.minutes(5),
             memory_size=1024,
             environment={
-                "MASSIVE_API_KEY_PARAM": MASSIVE_KEY_PARAM,
+                "MASSIVE_API_KEY_SECRET": MASSIVE_API_KEY_SECRET,
+                "MASSIVE_API_KEY_JSON_KEY": MASSIVE_API_KEY_JSON_KEY,
                 "MARKET_DATA_FUNCTION": MARKET_DATA_FUNCTION,
                 "COVERAGE_PARAM": COVERAGE_PARAM,
             },
@@ -89,10 +87,8 @@ class PipelineStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3TablesFullAccess")
         )
 
-        # Encrypted with the AWS-managed aws/ssm key, whose key policy already
-        # lets SSM decrypt for in-account callers — so no explicit KMS grant.
-        ssm.StringParameter.from_secure_string_parameter_attributes(
-            self, "MassiveApiKey", parameter_name=MASSIVE_KEY_PARAM,
+        secretsmanager.Secret.from_secret_name_v2(
+            self, "MassiveApiKey", MASSIVE_API_KEY_SECRET,
         ).grant_read(ingest_fn)
 
         # An explicit statement rather than StringParameter.from_string_parameter_name,
