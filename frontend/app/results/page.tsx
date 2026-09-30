@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import GlassCard from '@/components/ui/GlassCard';
 import AnimatedButton from '@/components/ui/AnimatedButton';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import Markdown from '@/components/Markdown';
 import PipelineProgress, { STEP_LABELS } from '@/components/PipelineProgress';
 import { AgentOutput, PipelineStep, StepName, StrategyInput, Trade } from '@/types/strategy';
 import { FRONTEND_VERSION } from '@/lib/version';
@@ -437,9 +438,7 @@ function ResultsDisplayContent() {
                   <span className="text-2xl">📊</span>
                   <h4 className="text-xl font-semibold text-white">Executive Summary</h4>
                 </div>
-                <p className="text-gray-300 leading-relaxed">
-                  {results.executive_summary}
-                </p>
+                <Markdown className="text-gray-300">{results.executive_summary}</Markdown>
               </GlassCard>
             </motion.div>
           )}
@@ -457,9 +456,7 @@ function ResultsDisplayContent() {
                   <span className="text-2xl">🔍</span>
                   <h4 className="text-xl font-semibold text-white">Detailed Analysis</h4>
                 </div>
-                <p className="text-gray-300 leading-relaxed">
-                  {results.detailed_analysis}
-                </p>
+                <Markdown className="text-gray-300">{results.detailed_analysis}</Markdown>
               </GlassCard>
             </motion.div>
           )}
@@ -486,7 +483,7 @@ function ResultsDisplayContent() {
                       </div>
                       <ul className="list-disc list-inside space-y-1 text-gray-300 ml-4">
                         {results.concerns_and_recommendations.highPriority.map((item: string, index: number) => (
-                          <li key={index}>{item}</li>
+                          <li key={index}><Markdown inline>{item}</Markdown></li>
                         ))}
                       </ul>
                     </div>
@@ -500,7 +497,7 @@ function ResultsDisplayContent() {
                       </div>
                       <ul className="list-disc list-inside space-y-1 text-gray-300 ml-4">
                         {results.concerns_and_recommendations.mediumPriority.map((item: string, index: number) => (
-                          <li key={index}>{item}</li>
+                          <li key={index}><Markdown inline>{item}</Markdown></li>
                         ))}
                       </ul>
                     </div>
@@ -514,7 +511,7 @@ function ResultsDisplayContent() {
                       </div>
                       <ul className="list-disc list-inside space-y-1 text-gray-300 ml-4">
                         {results.concerns_and_recommendations.considerTesting.map((item: string, index: number) => (
-                          <li key={index}>{item}</li>
+                          <li key={index}><Markdown inline>{item}</Markdown></li>
                         ))}
                       </ul>
                     </div>

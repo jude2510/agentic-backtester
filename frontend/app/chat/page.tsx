@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import GlassCard from '@/components/ui/GlassCard';
 import AnimatedButton from '@/components/ui/AnimatedButton';
+import Markdown from '@/components/Markdown';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -171,18 +172,22 @@ export default function ChatPage() {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <GlassCard
-                className={`p-4 max-w-[80%] ${
+                className={`p-4 min-w-0 ${
                   msg.role === 'user'
-                    ? 'bg-accent-blue/10 border-accent-blue/20'
-                    : 'bg-white/5 border-white/10'
+                    ? 'max-w-[80%] bg-accent-blue/10 border-accent-blue/20'
+                    : 'max-w-[95%] bg-white/5 border-white/10'
                 }`}
               >
                 <div className="text-xs text-gray-500 mb-1">
                   {msg.role === 'user' ? 'You' : 'Quant Assistant'}
                 </div>
-                <div className="text-gray-200 text-sm whitespace-pre-wrap">
-                  {msg.content}
-                </div>
+                {/* The assistant answers in Markdown (headings, tables);
+                    what the user typed is shown exactly as typed. */}
+                {msg.role === 'assistant' ? (
+                  <Markdown className="text-gray-200 text-sm">{msg.content}</Markdown>
+                ) : (
+                  <div className="text-gray-200 text-sm whitespace-pre-wrap">{msg.content}</div>
+                )}
               </GlassCard>
             </motion.div>
           ))}
