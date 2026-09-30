@@ -200,7 +200,7 @@ function ResultsDisplayContent() {
         strategy_type: backtestResult.strategyName || strategy.name,
         stop_loss: `${strategy.stop_loss}%`,
         take_profit: `${strategy.take_profit}%`,
-        max_positions: strategy.max_positions,
+        position_pct: strategy.position_pct,
         buy_conditions: strategy.buy_conditions || '',
         sell_conditions: strategy.sell_conditions || '',
         backtest_window: strategy.backtest_window || '',
@@ -255,7 +255,7 @@ function ResultsDisplayContent() {
         strategy_type: strategy.name,
         stop_loss: `${strategy.stop_loss}%`,
         take_profit: `${strategy.take_profit}%`,
-        max_positions: strategy.max_positions,
+        position_pct: strategy.position_pct,
         buy_conditions: strategy.buy_conditions || '',
         sell_conditions: strategy.sell_conditions || '',
         backtest_window: strategy.backtest_window || '',
@@ -482,8 +482,10 @@ function ResultsDisplayContent() {
                 <p className="text-accent-green text-lg font-medium mt-1">{results.take_profit}</p>
               </div>
               <div>
-                <span className="text-gray-400">Max Positions:</span>
-                <p className="text-white text-lg font-medium mt-1">{results.max_positions}</p>
+                <span className="text-gray-400">Position Size:</span>
+                <p className="text-white text-lg font-medium mt-1">
+                  {results.position_pct ? `${results.position_pct}% of cash` : 'default (95% of cash)'}
+                </p>
               </div>
               {results.backtest_window && (
                 <div>

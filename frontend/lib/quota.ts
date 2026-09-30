@@ -17,6 +17,7 @@
 
 import {
   DynamoDBClient,
+  GetItemCommand,
   UpdateItemCommand,
   ConditionalCheckFailedException,
 } from '@aws-sdk/client-dynamodb';
@@ -203,6 +204,33 @@ export async function consumeQuota(
 /** Convenience wrapper — the backtest route is the main consumer. */
 export function consumeBacktestQuota(subject?: string): Promise<QuotaResult> {
   return consumeQuota('backtest', subject);
+}
+
+export interface Usage {
+  used: number;
+  limit: number;
+}
+
+async function readCount(id: string): Promise<number> {
+  const { Item } = await client.send(
+    new GetItemCommand({
+      TableName: TABLE,
+      Key: { id: { S: id } },
+      ProjectionExpression: '#count',
+      ExpressionAttributeNames: { '#count': 'count' },
+    })
+  );
+  return Number(Item?.count?.N ?? 0);
+}
+
+/** Read-only view of the backtest counters — consumes nothing. */
+export async function readBacktestUsage(): Promise<{ today: Usage; month: Usage }> {
+  const [month, day] = counters('backtest');
+  const [monthUsed, dayUsed] = await Promise.all([readCount(month.id), readCount(day.id)]);
+  return {
+    today: { used: dayUsed, limit: day.limit },
+    month: { used: monthUsed, limit: month.limit },
+  };
 }
 
 /** Chat and history: cheaper single model calls, metered separately. */

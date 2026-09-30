@@ -45,9 +45,16 @@ export default function ChatPage() {
         body: JSON.stringify({ prompt }),
       });
 
-      const started = await startResponse.json();
+      const started = await startResponse.json().catch(() => ({}));
       if (!started.success) {
-        throw new Error(started.error || `HTTP ${startResponse.status}`);
+        // A reply from the server — e.g. the daily chat capacity notice on a
+        // 429 — is shown as written, not dressed up as a connection problem.
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: started.error || `The assistant couldn't start (HTTP ${startResponse.status}). Please try again.`,
+          timestamp: new Date(),
+        }]);
+        return;
       }
 
       const deadline = Date.now() + 5 * 60 * 1000;
@@ -76,9 +83,11 @@ export default function ChatPage() {
       };
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error: any) {
+      // Network failures and failed or timed-out jobs.
+      const reachedServer = !(error instanceof TypeError);
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Connection error: ${error.message}`,
+        content: reachedServer ? error.message : `Connection error: ${error.message}`,
         timestamp: new Date(),
       }]);
     } finally {

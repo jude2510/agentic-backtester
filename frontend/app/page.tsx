@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import GlassCard from '@/components/ui/GlassCard';
 import GlassInput from '@/components/ui/GlassInput';
 import GlassSelect from '@/components/ui/GlassSelect';
 import AnimatedButton from '@/components/ui/AnimatedButton';
-import { AVAILABLE_STOCKS, SYMBOL_COVERAGE, ValidationResult, WINDOW_ORDER, windowsFor } from '@/types/strategy';
+import { Coverage, FALLBACK_COVERAGE, STOCK_NAMES, ValidationResult, WINDOW_ORDER, windowsFor } from '@/types/strategy';
 import { FRONTEND_VERSION } from '@/lib/version';
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -18,22 +18,47 @@ export default function StrategyBuilder() {
     name: 'My Trading Strategy',
     stock_symbol: 'AMZN',
     backtest_window: '10Y',
-    max_positions: 1000,
+    position_pct: 95,
     stop_loss: 10,
     take_profit: 30,
     buy_conditions: '10 SMA crosses above 30 SMA',
     sell_conditions: '10 SMA crosses below 30 SMA'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({
     isValid: true,
     errors: []
   });
 
-  // Every listed symbol is loaded in the market-data table, so none are disabled.
-  const stockOptions = AVAILABLE_STOCKS.map(stock => ({
-    value: stock.symbol,
-    label: `${stock.symbol} - ${stock.name}`
+  // What the market-data table actually holds, published by the ingest after
+  // every run. The fallback covers the moment before this answers, or an outage.
+  const [coverage, setCoverage] = useState<Coverage>(FALLBACK_COVERAGE);
+
+  useEffect(() => {
+    fetch(`${BASE_PATH}/api/coverage`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (data?.symbols) setCoverage(data.symbols); })
+      .catch(() => { /* keep the fallback */ });
+  }, []);
+
+  // If the loaded coverage no longer backs the selected window, clamp it.
+  useEffect(() => {
+    const allowed = windowsFor(coverage[formData.stock_symbol]?.start);
+    if (!allowed.includes(formData.backtest_window)) {
+      setFormData(prev => ({ ...prev, backtest_window: allowed[allowed.length - 1] }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coverage]);
+
+  // Offer exactly the symbols the table holds, known names first.
+  const symbols = [
+    ...Object.keys(STOCK_NAMES).filter(s => s in coverage),
+    ...Object.keys(coverage).filter(s => !(s in STOCK_NAMES)).sort(),
+  ];
+  const stockOptions = symbols.map(symbol => ({
+    value: symbol,
+    label: `${symbol} - ${STOCK_NAMES[symbol] ?? symbol}`
   }));
 
   const WINDOW_LABELS: Record<string, string> = {
@@ -41,15 +66,14 @@ export default function StrategyBuilder() {
     '2Y': '2 Years', '5Y': '5 Years', '10Y': '10 Years', '20Y': '20 Years'
   };
 
-  // Offer only windows the selected symbol has data for. AMZN reaches back 25
-  // years; the others start 2021-08-17, so anything beyond 5Y would quietly
+  // Offer only windows the selected symbol has data for. AMZN reaches back to
+  // 2000; the others start 2021-08-17, so a longer window would quietly
   // backtest a shorter period than the label promises.
-  const windowOptions = windowsFor(formData.stock_symbol).map(w => ({
+  const symbolCoverage = coverage[formData.stock_symbol];
+  const windowOptions = windowsFor(symbolCoverage?.start).map(w => ({
     value: w,
     label: WINDOW_LABELS[w]
   }));
-
-  const coverageStart = SYMBOL_COVERAGE[formData.stock_symbol]?.start;
 
   const handleInputChange = (field: keyof typeof formData, value: string | number) => {
     const next = { ...formData, [field]: value };
@@ -58,7 +82,7 @@ export default function StrategyBuilder() {
     // (e.g. AMZN 20Y -> NVDA). Clamp to the longest window the new symbol
     // supports rather than submitting a request it cannot satisfy.
     if (field === 'stock_symbol') {
-      const allowed = windowsFor(String(value));
+      const allowed = windowsFor(coverage[String(value)]?.start);
       if (!allowed.includes(next.backtest_window)) {
         next.backtest_window = allowed[allowed.length - 1];
       }
@@ -75,7 +99,7 @@ export default function StrategyBuilder() {
     if (!data.stock_symbol) errors.push('Please select a stock');
     if (!data.buy_conditions?.trim()) errors.push('Buy conditions are required');
     if (!data.sell_conditions?.trim()) errors.push('Sell conditions are required');
-    if (data.max_positions < 1) errors.push('Max positions must be at least 1');
+    if (data.position_pct < 1 || data.position_pct > 95) errors.push('Position size must be between 1% and 95%');
     if (data.stop_loss < 0 || data.stop_loss > 100) errors.push('Stop loss must be between 0 and 100');
     if (data.take_profit < 0 || data.take_profit > 100) errors.push('Take profit must be between 0 and 100');
 
@@ -90,6 +114,7 @@ export default function StrategyBuilder() {
     if (!validateForm().isValid) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
 
     try {
       // Start the backtest job
@@ -99,11 +124,16 @@ export default function StrategyBuilder() {
         body: JSON.stringify(formData),
       });
 
+      const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        // The server's own message — e.g. the daily capacity notice on a 429 —
+        // rather than a generic failure the visitor can't act on.
+        setSubmitError(body.error || `Couldn't start the backtest (HTTP ${response.status}). Please try again.`);
+        setIsSubmitting(false);
+        return;
       }
 
-      const { jobId } = await response.json();
+      const { jobId } = body;
       console.log('[StrategyBuilder] ✅ Job started, ID:', jobId);
       
       // Navigate to workflow page with strategy and jobId
@@ -111,7 +141,7 @@ export default function StrategyBuilder() {
       
     } catch (error) {
       console.error('[StrategyBuilder] ❌ Error:', error);
-      alert('Failed to start backtest. Please try again.');
+      setSubmitError("Couldn't reach the server. Check your connection and try again.");
       setIsSubmitting(false);
     }
   };
@@ -168,9 +198,9 @@ export default function StrategyBuilder() {
                       value={formData.backtest_window}
                       onChange={(value) => handleInputChange('backtest_window', value)}
                     />
-                    {coverageStart && (
+                    {symbolCoverage && (
                       <p className="mt-2 text-xs text-white/50">
-                        Data available from {coverageStart}
+                        Data available {symbolCoverage.start} to {symbolCoverage.end}
                         {windowOptions.length < WINDOW_ORDER.length &&
                           ` — windows beyond ${windowOptions[windowOptions.length - 1].label} aren't offered for ${formData.stock_symbol}`}
                       </p>
@@ -178,15 +208,16 @@ export default function StrategyBuilder() {
                   </div>
                 </div>
 
-                {/* Row 2: Max Positions & Stop Loss */}
+                {/* Row 2: Position Size & Stop Loss */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <GlassInput
-                    label="🔢 Max Positions"
+                    label="📐 Position Size (% of cash)"
                     type="number"
                     min={1}
-                    max={10}
-                    value={formData.max_positions}
-                    onChange={(e) => handleInputChange('max_positions', parseInt(e.target.value) || 1)}
+                    max={95}
+                    value={formData.position_pct}
+                    onChange={(e) => handleInputChange('position_pct', parseInt(e.target.value) || 1)}
+                    error={validation.errors.find(e => e.includes('Position size'))}
                   />
 
                   <GlassInput
@@ -253,6 +284,11 @@ export default function StrategyBuilder() {
                   >
                     {isSubmitting ? 'Starting Backtest...' : '🚀 Run Backtest'}
                   </AnimatedButton>
+                  {submitError && (
+                    <p className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-2 text-sm text-amber-200/90">
+                      {submitError}
+                    </p>
+                  )}
                 </div>
               </form>
             </GlassCard>
@@ -282,8 +318,8 @@ export default function StrategyBuilder() {
                   <span className="text-white font-medium">{formData.backtest_window}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Max Positions:</span>
-                  <span className="text-white font-medium">{formData.max_positions}</span>
+                  <span className="text-gray-400">Position Size:</span>
+                  <span className="text-white font-medium">{formData.position_pct}% of cash</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Stop Loss:</span>

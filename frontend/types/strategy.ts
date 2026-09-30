@@ -3,7 +3,7 @@ export interface StrategyInput {
   name: string;
   stock_symbol: string;
   backtest_window: string;
-  max_positions: number;
+  position_pct: number; // % of available cash per buy (1-95)
   stop_loss: number;
   take_profit: number;
   buy_conditions: string;
@@ -30,7 +30,7 @@ export interface AgentOutput {
   strategy_type: string;
   stop_loss: string;
   take_profit: string;
-  max_positions: number;
+  position_pct: number;
   buy_conditions?: string;
   sell_conditions?: string;
   backtest_window?: string;
@@ -94,46 +94,48 @@ export interface BacktestMemoryRecord {
   strategy_code: string | null;
 }
 
-export interface StockOption {
-  symbol: string;
-  name: string;
-}
-
-// Only symbols actually loaded in the market-data table. Keep in sync with
-// market-data-pipeline/symbols.json — listing a symbol here that hasn't been
-// ingested produces an empty backtest rather than an error.
-export const AVAILABLE_STOCKS: StockOption[] = [
-  { symbol: 'AMZN', name: 'Amazon.com Inc.' },
-  { symbol: 'NVDA', name: 'NVIDIA Corporation' },
-  { symbol: 'MSFT', name: 'Microsoft Corporation' },
-  { symbol: 'TSLA', name: 'Tesla, Inc.' },
-  { symbol: 'SPY', name: 'SPDR S&P 500 ETF' }
-];
-
-/**
- * Longest backtest window each symbol can actually support.
- *
- * Coverage is deliberately asymmetric: AMZN carries 25 years from the original
- * CSV load, while the rest begin at the data provider's 5-year plan limit
- * (2021-08-17). Offering a longer window than a symbol can back would silently
- * return a shorter series — the backtest would run, look successful, and cover
- * a different period than the UI claims.
- */
-export const WINDOW_ORDER = ['1M', '3M', '6M', '1Y', '2Y', '5Y', '10Y', '20Y'] as const;
-
-export const SYMBOL_COVERAGE: Record<string, { start: string; maxWindow: string }> = {
-  AMZN: { start: '2000-01-03', maxWindow: '20Y' },
-  NVDA: { start: '2021-08-17', maxWindow: '5Y' },
-  MSFT: { start: '2021-08-17', maxWindow: '5Y' },
-  TSLA: { start: '2021-08-17', maxWindow: '5Y' },
-  SPY: { start: '2021-08-17', maxWindow: '5Y' }
+// Display names for the symbols the pipeline loads. Which symbols are offered,
+// and for which windows, comes from the data itself via /api/coverage.
+export const STOCK_NAMES: Record<string, string> = {
+  AMZN: 'Amazon.com Inc.',
+  NVDA: 'NVIDIA Corporation',
+  MSFT: 'Microsoft Corporation',
+  TSLA: 'Tesla, Inc.',
+  SPY: 'SPDR S&P 500 ETF'
 };
 
-/** Windows valid for `symbol`, longest-supported first removed beyond coverage. */
-export function windowsFor(symbol: string): string[] {
-  const max = SYMBOL_COVERAGE[symbol]?.maxWindow ?? '5Y';
-  const maxIdx = WINDOW_ORDER.indexOf(max as typeof WINDOW_ORDER[number]);
-  return WINDOW_ORDER.slice(0, maxIdx + 1);
+/** Stored date range per symbol, as published by the ingest pipeline. */
+export type Coverage = Record<string, { start: string; end: string; rows?: number }>;
+
+/**
+ * Used only until /api/coverage answers, or if it can't: the ranges as of
+ * September 2026. The live values come from the pipeline after every run.
+ */
+export const FALLBACK_COVERAGE: Coverage = {
+  AMZN: { start: '2000-01-03', end: '2026-09-29' },
+  NVDA: { start: '2021-08-17', end: '2026-09-29' },
+  MSFT: { start: '2021-08-17', end: '2026-09-29' },
+  TSLA: { start: '2021-08-17', end: '2026-09-29' },
+  SPY: { start: '2021-08-17', end: '2026-09-29' }
+};
+
+export const WINDOW_ORDER = ['1M', '3M', '6M', '1Y', '2Y', '5Y', '10Y', '20Y'] as const;
+
+// Calendar days per window — the same values the agent resolves dates from.
+const WINDOW_DAYS: Record<string, number> = {
+  '1M': 30, '3M': 91, '6M': 182, '1Y': 365, '2Y': 730, '5Y': 1825, '10Y': 3652, '20Y': 7305
+};
+
+/**
+ * Windows the stored data can actually back for a symbol whose history starts
+ * on `start`. Offering a longer window wouldn't fail — it would silently
+ * backtest a shorter period than the label claims.
+ */
+export function windowsFor(start: string | undefined): string[] {
+  if (!start) return ['1M', '3M', '6M', '1Y'];
+  const historyDays = (Date.now() - new Date(start).getTime()) / 86_400_000;
+  // A few days of slack so a window starting on a weekend still counts.
+  return WINDOW_ORDER.filter(w => WINDOW_DAYS[w] <= historyDays + 5);
 }
 
 export interface ValidationResult {
