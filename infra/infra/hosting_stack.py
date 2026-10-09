@@ -9,9 +9,11 @@ anyone else can reach the app. These exist *because* strangers can.
   2. Budget alarm — an independent backstop, because an app-level counter fails
      open if the app has a bug.
 
-Sizing: a backtest costs roughly $0.22, ~90% of it Bedrock model calls
-(measured Aug 2026: $1.512 of LLM spend across 7 runs). A $25/month ceiling is
-therefore about 110 backtests.
+Sizing: the limits were set when a backtest cost about $0.22 (measured Aug
+2026), which made 110 a month about $25. Since the fixed pipeline replaced the
+LLM orchestrator, a backtest's model calls cost about $0.05 (measured Sep 2026
+from the bill: $0.046), so the same limits now sit well inside the budget.
+They are kept as they are by choice.
 """
 
 import os
@@ -31,10 +33,9 @@ from infra.pipeline_stack import coverage_param_arn
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _WORKER_DIR = os.path.join(_REPO_ROOT, "backtest-worker")
 
-# Derived from the measured ~$0.22/backtest. Kept here as the single source of
-# truth; the frontend reads them from stack outputs / env rather than
-# hardcoding its own copy.
-MONTHLY_BACKTEST_LIMIT = 110   # ≈ $25 of model spend
+# Mirrored as defaults in frontend/lib/quota.ts, which is what enforces them;
+# change both together.
+MONTHLY_BACKTEST_LIMIT = 110   # about $6 of model spend at $0.05 a backtest
 DAILY_BACKTEST_LIMIT = 15      # stops one bad day consuming the month
 PER_USER_DAILY_LIMIT = 3       # fairness; enforced once auth provides identity
 
@@ -108,7 +109,7 @@ class HostingStack(Stack):
 
         # Asynchronous invocation retries a throwing function twice more by
         # default. For an idempotent, cheap function that is a sensible default;
-        # here each attempt runs a fresh ~$0.22 backtest, and it compounds with
+        # here each attempt runs a fresh backtest at full model cost, and it compounds with
         # any client-level retry inside the function. One observed failure
         # produced 7 agent invocations from a single user request.
         #

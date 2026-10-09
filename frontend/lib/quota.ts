@@ -1,8 +1,9 @@
 /**
  * Backtest quota enforcement.
  *
- * Each backtest costs roughly $0.22, ~90% of it Bedrock model calls, so the
- * only control that matters is capping *invocations*. Counters live in
+ * Nearly all of a backtest's cost is Bedrock model calls (about $0.05 a run,
+ * measured Sep 2026), so the only control that matters is capping
+ * *invocations*. Counters live in
  * DynamoDB rather than process memory because the app may run on more than one
  * instance, and because an in-memory counter resets on every deploy — which is
  * exactly when you least want the cap to disappear.

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const strategyInput = await request.json();
 
     // Gate before anything is spent. This is the only path that triggers model
-    // calls (~$0.22 each, ~90% Bedrock), so the cap belongs at the front of it.
+    // calls (about $0.05 a backtest), so the cap belongs at the front of it.
     const quota = await consumeBacktestQuota(undefined);
     if (!quota.allowed) {
       return NextResponse.json(
