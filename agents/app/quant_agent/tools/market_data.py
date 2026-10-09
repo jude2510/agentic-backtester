@@ -60,10 +60,10 @@ def parse_gateway_rows(gateway_response: Dict[str, Any]) -> Tuple[Dict[str, Any]
     names are mapped for Backtrader (open_price -> open, high_price -> high,
     low_price -> low, close_price -> close; volume and adj_close unchanged).
 
-    An empty list means the service answered and had no rows. Note the Lambda
-    answers "no rows" with success=false and an empty list, and currently does
-    the same when its own query fails, so the two can't be told apart here.
-    Anything else malformed or unsuccessful raises ValueError.
+    An empty list means the service answered and had no rows: the Lambda says
+    "no rows" with success=false and an empty data list. A failed query comes
+    back with success=false and no data list, and like anything else malformed
+    or unsuccessful raises ValueError.
     """
     result = gateway_response.get('result', {})
     content = result.get('content', [])
@@ -268,7 +268,7 @@ def fetch_market_data(symbol: str, start_date: str, end_date: str, limit: int) -
     try:
         metadata, bars = parse_gateway_rows(response)
     except ValueError as e:
-        raise StepError(f"the market data response could not be read: {e}")
+        raise StepError(f"the market data service failed: {e}")
 
     returned = str(metadata.get('symbol') or symbol).upper()
     if returned != symbol.upper():

@@ -27,76 +27,70 @@ S3_TABLES_CONFIG = {
 
 def setup_s3_tables_catalog():
     """Setup PyIceberg catalog for S3 Tables"""
-    try:
-        sts_client = boto3.client('sts')
-        account_id = sts_client.get_caller_identity()['Account']
-        
-        config = S3_TABLES_CONFIG
-        catalog_config = {
-            "type": "rest",
-            "warehouse": f"arn:aws:s3tables:{config['region']}:{account_id}:bucket/{config['bucket_name']}",
-            "uri": f"https://s3tables.{config['region']}.amazonaws.com/iceberg",
-            "rest.sigv4-enabled": "true",
-            "rest.signing-name": "s3tables",
-            "rest.signing-region": config['region']
-        }
-        
-        catalog = load_catalog("s3tables", **catalog_config)
-        return catalog
-        
-    except Exception as e:
-        print(f"Failed to setup S3 Tables catalog: {e}")
-        return None
+    sts_client = boto3.client('sts')
+    account_id = sts_client.get_caller_identity()['Account']
+
+    config = S3_TABLES_CONFIG
+    catalog_config = {
+        "type": "rest",
+        "warehouse": f"arn:aws:s3tables:{config['region']}:{account_id}:bucket/{config['bucket_name']}",
+        "uri": f"https://s3tables.{config['region']}.amazonaws.com/iceberg",
+        "rest.sigv4-enabled": "true",
+        "rest.signing-name": "s3tables",
+        "rest.signing-region": config['region']
+    }
+
+    return load_catalog("s3tables", **catalog_config)
 
 def query_s3_tables_data(symbol=None, start_date=None, end_date=None, limit=10000):
-    """Query data from S3 Tables using PyIceberg with filters"""
-    try:
-        catalog = setup_s3_tables_catalog()
-        if not catalog:
-            return None
-        
-        config = S3_TABLES_CONFIG
-        table = catalog.load_table(f"{config['namespace']}.{config['table_name']}")
-        
-        # Build filter expressions for scan
-        filters = []
-        
-        # Add symbol filter
-        if symbol:
-            filters.append(EqualTo("symbol", symbol.upper()))
-        
-        # Add date range filters
-        if start_date:
-            filters.append(GreaterThanOrEqual("date", start_date))
-        
-        if end_date:
-            filters.append(LessThanOrEqual("date", end_date))
-        
-        # Scan data with filters
-        if filters:
-            if len(filters) == 1:
-                scan = table.scan(row_filter=filters[0])
-            else:
-                scan = table.scan(row_filter=And(*filters))
+    """Query data from S3 Tables using PyIceberg with filters.
+
+    Errors propagate. This used to catch them and return None, which the
+    response formatter reported as "No data found": a broken catalog or query
+    looked exactly like a window with no rows, and the backtest said "nothing
+    found" when it had actually failed. lambda_handler turns an exception into
+    a 500 with data=None, which the agent reports as a failed step.
+    """
+    catalog = setup_s3_tables_catalog()
+
+    config = S3_TABLES_CONFIG
+    table = catalog.load_table(f"{config['namespace']}.{config['table_name']}")
+    
+    # Build filter expressions for scan
+    filters = []
+    
+    # Add symbol filter
+    if symbol:
+        filters.append(EqualTo("symbol", symbol.upper()))
+    
+    # Add date range filters
+    if start_date:
+        filters.append(GreaterThanOrEqual("date", start_date))
+    
+    if end_date:
+        filters.append(LessThanOrEqual("date", end_date))
+    
+    # Scan data with filters
+    if filters:
+        if len(filters) == 1:
+            scan = table.scan(row_filter=filters[0])
         else:
-            scan = table.scan()
+            scan = table.scan(row_filter=And(*filters))
+    else:
+        scan = table.scan()
+    
+    arrow_table = scan.to_arrow()
+    
+    # Sort by date
+    if len(arrow_table) > 0:
+        indices = pc.sort_indices(arrow_table, sort_keys=[('date', 'ascending')])
+        arrow_table = pc.take(arrow_table, indices)
         
-        arrow_table = scan.to_arrow()
-        
-        # Sort by date
-        if len(arrow_table) > 0:
-            indices = pc.sort_indices(arrow_table, sort_keys=[('date', 'ascending')])
-            arrow_table = pc.take(arrow_table, indices)
-            
-            # Apply limit if specified
-            if limit and len(arrow_table) > limit:
-                arrow_table = arrow_table.slice(len(arrow_table) - limit)
-        
-        return arrow_table
-        
-    except Exception as e:
-        print(f"Failed to query S3 Tables: {e}")
-        return None
+        # Apply limit if specified
+        if limit and len(arrow_table) > limit:
+            arrow_table = arrow_table.slice(len(arrow_table) - limit)
+    
+    return arrow_table
 
 
 def format_market_data_response(arrow_table, symbol):
