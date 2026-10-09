@@ -32,6 +32,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from iceberg_writer import (
     ensure_partition_spec,
@@ -49,6 +50,20 @@ SYMBOLS_FILE = Path(__file__).parent / "symbols.json"
 # recent bars (late corrections, consolidated volume), and the overlap is free
 # because filtered overwrite is idempotent.
 OVERLAP_DAYS = 5
+
+# A daily bar is final once the day's trading is over, extended hours included,
+# and those end at 20:00 New York time. Before then the vendor serves a partial
+# bar for today: a manual run during market hours stored one on 2026-09-30.
+MARKET_TZ = ZoneInfo("America/New_York")
+BAR_FINAL_AFTER = dt.time(20, 0)
+
+
+def last_final_day(now: dt.datetime) -> dt.date:
+    """The latest date whose daily bar can no longer change."""
+    local = now.astimezone(MARKET_TZ)
+    if local.time() >= BAR_FINAL_AFTER:
+        return local.date()
+    return local.date() - dt.timedelta(days=1)
 
 
 def write_floor(existing_last: dt.date | None) -> dt.date | None:
@@ -98,14 +113,19 @@ def main(argv: list[str] | None = None) -> int:
     symbols = ([s.strip().upper() for s in args.symbols.split(",")]
                if args.symbols else load_symbols())
 
+    end = min(args.end, last_final_day(dt.datetime.now(dt.timezone.utc)))
+
     if args.delta:
-        requested_start = args.end - dt.timedelta(days=OVERLAP_DAYS * 2)
+        requested_start = end - dt.timedelta(days=OVERLAP_DAYS * 2)
     elif args.start:
         requested_start = args.start
     else:
-        requested_start = args.end - dt.timedelta(days=365 * args.years)
+        requested_start = end - dt.timedelta(days=365 * args.years)
 
-    print(f"📅 window {requested_start} .. {args.end}")
+    print(f"📅 window {requested_start} .. {end}")
+    if end < args.end:
+        print(f"⏳ end capped at {end}, the latest day whose bar is final "
+              f"(after {BAR_FINAL_AFTER:%H:%M} New York time)")
     print(f"🎯 symbols: {', '.join(symbols)}")
     if args.dry_run:
         print("🧪 DRY RUN — no writes")
@@ -140,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"(stored through {existing_last})")
 
         fetch_start = since or requested_start
-        series = provider.get_daily_bars(symbol, fetch_start, args.end)
+        series = provider.get_daily_bars(symbol, fetch_start, end)
         print(f"   {series.coverage_note()}")
 
         if series.truncated and since is None:

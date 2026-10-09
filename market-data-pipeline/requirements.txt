@@ -17,3 +17,7 @@ boto3>=1.35.0
 # Provider adapters (Massive REST) and typed models
 httpx>=0.24.0
 pydantic>=2.0.0
+
+# zoneinfo's fallback database. The ingest needs New York time to know when a
+# daily bar is final, and the Lambda base image may not ship the system one.
+tzdata>=2024.1
