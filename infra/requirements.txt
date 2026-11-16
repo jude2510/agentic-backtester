@@ -1,2 +1,6 @@
-aws-cdk-lib>=2.257.0,<3.0.0
-constructs>=10.5.0,<11.0.0
+# Pinned to the versions deploys run with. A range let a fresh checkout pull a
+# newer aws-cdk-lib (2.277) than the deployed one (2.262), whose cloud assembly
+# the installed CDK CLI (2.1136) refused to read. Upgrade both deliberately,
+# together with the CLI.
+aws-cdk-lib==2.262.0
+constructs==10.7.1
