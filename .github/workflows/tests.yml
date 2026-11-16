@@ -1,0 +1,80 @@
+# Runs every command in the "Running the tests" table in AGENTS.md on each pull
+# request. Keep the `run:` lines matching that table so the two stay in sync.
+#
+# None of these tests call AWS or a model, so the workflow gets no AWS
+# credentials of any kind: no secrets, no OIDC role, no id-token permission.
+# A test that starts needing credentials should fail here, not be handed some.
+name: Tests
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Quant agent
+            run: cd agents/app/quant_agent && uv run python test_pipeline.py && uv run python test_pipeline_steps.py && python3 test_strategy_sandbox.py && python3 test_market_data_coverage.py
+          - name: Results summary agent
+            run: cd agents/app/results_summary && uv run python test_results_summary.py
+          - name: Ingest pipeline
+            run: cd market-data-pipeline && uv run --no-project --with-requirements requirements.txt python test_ingest.py
+          - name: Market-data Lambda
+            run: AWS_DEFAULT_REGION=us-east-1 uv run --no-project --with-requirements market-data-pipeline/requirements.txt python market-data-mcp/test_lambda_function.py
+          - name: Worker
+            run: uv run --no-project --with-requirements backtest-worker/requirements.txt python backtest-worker/test_handler.py
+          - name: Command guard
+            run: python3 .claude/hooks/test_guard_commands.py
+    steps:
+      - uses: actions/checkout@v4
+      # The agents deploy on AgentCore's PYTHON_3_11 runtime.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Frontend
+        run: cd frontend && npm ci && npx tsc --noEmit && npm run build
+
+  infra:
+    name: Infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The CDK CLI version deploys use; infra/requirements.txt pins the
+      # library to match it.
+      - name: Install the CDK CLI
+        run: npm install -g aws-cdk@2.1136.0
+      - name: Infra
+        run: cd infra && uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt && source .venv/bin/activate && cdk synth --quiet
