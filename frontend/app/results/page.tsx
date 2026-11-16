@@ -10,6 +10,7 @@ import Markdown from '@/components/Markdown';
 import PipelineProgress, { STEP_LABELS } from '@/components/PipelineProgress';
 import { AgentOutput, PipelineStep, StepName, StrategyInput, Trade } from '@/types/strategy';
 import { FRONTEND_VERSION } from '@/lib/version';
+import { formatMoney, formatSignedMoney } from '@/lib/money';
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
@@ -24,16 +25,15 @@ function toOutput(data: any): AgentOutput {
   const m = data.backtest_metrics || {};
   const metrics = m.metrics || {};
   const report = data.summary_report || {};
-  const cents = (v: number) => String(Math.round(v * 100) / 100);
   const sharpe = metrics['Sharpe Ratio'];
 
   return {
-    initial_investment: m.initial_value != null ? String(m.initial_value) : 'N/A',
-    final_portfolio_value: m.final_value != null ? cents(m.final_value) : 'N/A',
+    initial_investment: formatMoney(m.initial_value),
+    final_portfolio_value: formatMoney(m.final_value),
     total_return: m.total_return != null ? `${m.total_return.toFixed(2)}%` : 'N/A',
     maximum_drawdown: metrics['Max Drawdown'] || 'N/A',
     profit_loss: m.final_value != null && m.initial_value != null
-      ? cents(m.final_value - m.initial_value) : 'N/A',
+      ? formatMoney(m.final_value - m.initial_value) : 'N/A',
     sharpe_ratio: sharpe != null && sharpe !== 'N/A' ? String(sharpe) : 'N/A',
     symbol: strategy.stock_symbol || '',
     strategy_type: strategy.name || '',
@@ -254,7 +254,7 @@ function ResultsDisplayContent() {
               >
                 <div className="text-gray-400 text-sm mb-1">Initial Investment</div>
                 <div className="text-2xl font-bold text-white">
-                  ${results.initial_investment}
+                  {results.initial_investment}
                 </div>
               </motion.div>
 
@@ -266,7 +266,7 @@ function ResultsDisplayContent() {
               >
                 <div className="text-gray-400 text-sm mb-1">Final Value</div>
                 <div className="text-2xl font-bold text-accent-green">
-                  ${results.final_portfolio_value}
+                  {results.final_portfolio_value}
                 </div>
               </motion.div>
 
@@ -277,8 +277,8 @@ function ResultsDisplayContent() {
                 transition={{ duration: 0.5, delay: 0.9 }}
               >
                 <div className="text-gray-400 text-sm mb-1">Profit/Loss</div>
-                <div className={`text-2xl font-bold ${parseFloat(results.profit_loss || '0') >= 0 ? 'text-accent-green' : 'text-red-400'}`}>
-                  ${results.profit_loss || 'N/A'}
+                <div className={`text-2xl font-bold ${!results.profit_loss?.startsWith('-') ? 'text-accent-green' : 'text-red-400'}`}>
+                  {results.profit_loss || 'N/A'}
                 </div>
               </motion.div>
 
@@ -620,11 +620,11 @@ function ResultsDisplayContent() {
                           </td>
                           <td className="py-3 px-2 text-gray-300">{trade.entry_date}</td>
                           <td className="py-3 px-2 text-gray-300">{trade.exit_date}</td>
-                          <td className="py-3 px-2 text-right text-gray-300">${trade.entry_price.toFixed(2)}</td>
-                          <td className="py-3 px-2 text-right text-gray-300">${trade.exit_price.toFixed(2)}</td>
+                          <td className="py-3 px-2 text-right text-gray-300">{formatMoney(trade.entry_price)}</td>
+                          <td className="py-3 px-2 text-right text-gray-300">{formatMoney(trade.exit_price)}</td>
                           <td className="py-3 px-2 text-right text-gray-300">{trade.shares}</td>
                           <td className={`py-3 px-2 text-right font-medium ${trade.pnl >= 0 ? 'text-accent-green' : 'text-red-400'}`}>
-                            {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}
+                            {formatSignedMoney(trade.pnl)}
                           </td>
                           <td className={`py-3 px-2 text-right font-medium ${trade.pnl_pct >= 0 ? 'text-accent-green' : 'text-red-400'}`}>
                             {trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(2)}%
